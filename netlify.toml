@@ -1,0 +1,14 @@
+[build]
+  command = "node scripts/write-netlify-config.mjs"
+  publish = "frontend"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/api-not-deployed.json"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/static/index.html"
+  status = 200

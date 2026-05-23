@@ -25,6 +25,22 @@ Open:
 http://127.0.0.1:8000
 ```
 
+## Deploy
+
+Netlify can serve the static frontend, but it does not run the FastAPI server.
+
+- Connect the repo to Netlify and keep `netlify.toml` at the repo root.
+- Netlify publishes `frontend/` and rewrites `/` to `frontend/static/index.html`.
+- Deploy the FastAPI backend separately with:
+
+```bash
+python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+```
+
+- Set `SPECLINT_API_BASE_URL` in Netlify to the deployed backend origin, such as `https://speclint-api.example.com`.
+
+For Netlify Drop, uploading `frontend/` is cleanest. Uploading the whole repository also works because the root `_redirects` file points Netlify to the static app.
+
 ## Stack
 
 - FastAPI backend
