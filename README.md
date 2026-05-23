@@ -31,31 +31,50 @@ Netlify can serve the static frontend, but it does not run the FastAPI server.
 
 - Connect the repo to Netlify and keep `netlify.toml` at the repo root.
 - Netlify publishes `frontend/` and rewrites `/` to `frontend/static/index.html`.
-- Deploy the FastAPI backend separately with:
+- Deploy the FastAPI backend on Render, then set `SPECLINT_API_BASE_URL` in Netlify to the Render service origin.
 
-```bash
-python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+Example Netlify value:
+
+```text
+SPECLINT_API_BASE_URL=https://speclint-api.onrender.com
 ```
-
-- Set `SPECLINT_API_BASE_URL` in Netlify to the deployed backend origin, such as `https://speclint-api.example.com`.
 
 For Netlify Drop, uploading `frontend/` is cleanest. Uploading the whole repository also works because the root `_redirects` file points Netlify to the static app.
 
-### Railway Backend
+### Render Backend
 
-Railway can deploy the FastAPI backend from this same GitHub repository. The root `railway.json` file tells Railway to start the API with:
-
-```bash
-python -m uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8000}
-```
-
-After the Railway deployment succeeds, generate a public Railway domain and verify:
+Render can deploy the FastAPI backend from this same GitHub repository. The root `render.yaml` file defines a free Python Web Service with:
 
 ```text
-https://your-service.up.railway.app/api/health
+Build command: pip install -r requirements.txt
+Start command: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+Health check: /api/health
 ```
 
-Then set Netlify's `SPECLINT_API_BASE_URL` environment variable to the Railway origin, without a trailing slash.
+If creating the service manually in Render, use:
+
+```text
+Service type: Web Service
+Runtime: Python 3
+Branch: main
+Build command: pip install -r requirements.txt
+Start command: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+Instance type: Free
+```
+
+After the Render deployment succeeds, verify:
+
+```text
+https://your-service.onrender.com/api/health
+```
+
+Expected response:
+
+```text
+{"status":"ok","app":"SpecLint"}
+```
+
+Then set Netlify's `SPECLINT_API_BASE_URL` environment variable to the Render origin, without a trailing slash, and redeploy Netlify.
 
 ## Stack
 
