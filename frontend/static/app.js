@@ -6,9 +6,9 @@ const state = {
 };
 
 const strictnessCopy = {
-  lenient: "Lenient lowers penalties by 25% for rough early ideas.",
-  balanced: "Balanced uses the default rubric for specs that are close to planning.",
-  ruthless: "Ruthless raises penalties by 20% and warns when no hard rules are present.",
+  lenient: "Lenient - early-stage ideas, ignores minor gaps, flags only blockers.",
+  balanced: "Balanced - close to planning, default rubric, catches real holes.",
+  ruthless: "Ruthless - pre-engineering handoff, flags everything, expect 8-12 issues on any real spec.",
 };
 
 const els = {
@@ -546,4 +546,3 @@ loadExamples()
     return analyze({ recordHistory: true && loaded });
   })
   .catch((error) => toast(error.message));
-

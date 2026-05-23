@@ -33,24 +33,35 @@ if STATIC_PATH.exists():
 
 EXAMPLES = [
     ExampleSpec(
-        title="Workspace invites",
+        title="Transfer workspace ownership",
         spec_text=(
-            "Users can invite teammates to a workspace. Guests can view projects. "
-            "The invite should be easy to accept and should work quickly."
+            "Workspace admins can transfer ownership to another member. "
+            "The current owner should confirm the transfer and the new owner gets notified. "
+            "The transfer should be simple and safe."
         ),
     ),
     ExampleSpec(
-        title="Data export",
+        title="Two-factor authentication setup",
         spec_text=(
-            "Users should be able to export all data. The export should be fast and simple. "
-            "Admins can see previous exports."
+            "Users can enable two-factor authentication from account settings. "
+            "They scan a QR code and enter a verification code. "
+            "The setup should be secure and easy to recover from."
         ),
     ),
     ExampleSpec(
-        title="Project deletion",
+        title="Password reset flow",
         spec_text=(
-            "Project owners can delete projects. All project data is removed unless billing records must be kept. "
-            "The user gets a confirmation."
+            "Users can reset their password by entering their email address. "
+            "If the account exists, send a reset link. "
+            "The link should expire and the process should prevent abuse."
+        ),
+    ),
+    ExampleSpec(
+        title="Connect GitHub repository",
+        spec_text=(
+            "Workspace admins can connect a GitHub repository to a project. "
+            "The app imports pull requests and issues after authorization. "
+            "The connection should be fast, reliable, and easy to disconnect."
         ),
     ),
 ]
@@ -81,4 +92,3 @@ def analyze(request: SpecAnalysisRequest) -> SpecAnalysisResponse:
         spec_text=request.spec_text,
         strictness=request.strictness,
     )
-

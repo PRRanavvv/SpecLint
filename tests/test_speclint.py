@@ -51,6 +51,29 @@ class SpecLintTests(unittest.TestCase):
         self.assertNotIn("contradiction", {issue.type.value for issue in report.issues})
         self.assertIn("score_breakdown", report.model_dump())
 
+    def test_ownership_transfer_requires_receiver_consent(self):
+        report = analyze_spec(
+            title="Transfer workspace ownership",
+            spec_text=(
+                "The current workspace owner can transfer ownership to another team member. "
+                "The new owner gets full admin access and the previous owner becomes a regular member. "
+                "The system sends a confirmation email to both parties. "
+                "Ownership transfer is permanent."
+            ),
+        )
+
+        issue_types = {issue.type.value for issue in report.issues}
+        self.assertIn("consent_gap", issue_types)
+        self.assertEqual(report.severity_counts["critical"], 1)
+        self.assertLess(report.score, 75)
+        self.assertIn("transfer", report.intent.actions)
+        self.assertIn("send", report.intent.actions)
+        self.assertIn("Primary object: workspace ownership.", report.rewritten_spec)
+        self.assertNotIn("action the email", report.rewritten_spec)
+        self.assertTrue(
+            any("receiving party has not accepted" in test.when for test in report.acceptance_tests)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

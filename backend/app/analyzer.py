@@ -44,6 +44,7 @@ ACTORS = {
 ENTITIES = {
     "account",
     "accounts",
+    "access",
     "comment",
     "comments",
     "data",
@@ -63,6 +64,7 @@ ENTITIES = {
     "notifications",
     "order",
     "orders",
+    "ownership",
     "payment",
     "payments",
     "profile",
@@ -88,8 +90,10 @@ ACTION_TERMS = {
     "assign",
     "cancel",
     "change",
+    "connect",
     "create",
     "delete",
+    "demote",
     "download",
     "edit",
     "export",
@@ -97,14 +101,18 @@ ACTION_TERMS = {
     "join",
     "login",
     "pay",
+    "promote",
     "publish",
+    "grant",
     "remove",
     "reset",
     "restore",
+    "revoke",
     "send",
     "share",
     "sign",
     "submit",
+    "transfer",
     "update",
     "upload",
     "view",
@@ -159,10 +167,11 @@ VAGUE_TERMS = {
     "user-friendly",
 }
 
-PERMISSION_ACTIONS = {"add", "approve", "archive", "assign", "delete", "edit", "export", "invite", "remove", "share", "update", "view"}
-LIFECYCLE_ENTITIES = {"invite", "invites", "invitation", "invitations", "order", "orders", "payment", "payments", "subscription", "subscriptions"}
-DATA_CONSTRAINT_ENTITIES = {"account", "accounts", "email", "emails", "file", "files", "invoice", "invoices", "payment", "payments", "workspace", "workspaces"}
-SECURITY_TERMS = {"access", "admin", "admins", "delete", "export", "guest", "guests", "invite", "share", "token", "upload"}
+PERMISSION_ACTIONS = {"add", "approve", "archive", "assign", "delete", "edit", "export", "invite", "remove", "revoke", "share", "transfer", "update", "view"}
+LIFECYCLE_ENTITIES = {"invite", "invites", "invitation", "invitations", "order", "orders", "ownership", "payment", "payments", "subscription", "subscriptions"}
+DATA_CONSTRAINT_ENTITIES = {"account", "accounts", "email", "emails", "file", "files", "invoice", "invoices", "ownership", "payment", "payments", "workspace", "workspaces"}
+SECURITY_TERMS = {"access", "admin", "admins", "delete", "export", "guest", "guests", "invite", "owner", "ownership", "share", "token", "transfer", "upload"}
+CONTROL_TRANSFER_TERMS = {"access", "admin", "control", "guest", "member", "owner", "ownership", "permission", "role"}
 
 SEVERITY_WEIGHTS = {
     Severity.critical: 28,
@@ -178,9 +187,9 @@ STRICTNESS_MULTIPLIERS = {
 }
 
 STRICTNESS_NOTES = {
-    Strictness.lenient: "Lenient lowers penalties by 25% and is meant for rough early ideas.",
-    Strictness.balanced: "Balanced uses the default rubric for specs that are close to planning.",
-    Strictness.ruthless: "Ruthless raises penalties by 20% and adds a warning when no hard rules are present.",
+    Strictness.lenient: "Lenient - early-stage ideas, ignores minor gaps, flags only blockers.",
+    Strictness.balanced: "Balanced - close to planning, default rubric, catches real holes.",
+    Strictness.ruthless: "Ruthless - pre-engineering handoff, flags everything, expect 8-12 issues on any real spec.",
 }
 
 CATEGORY_DOCS = [
@@ -198,6 +207,11 @@ CATEGORY_DOCS = [
         type=IssueType.permission_gap,
         label="Permission gap",
         checks_for="Sensitive actions without role boundaries, denial behavior, or abuse controls.",
+    ),
+    CategoryDoc(
+        type=IssueType.consent_gap,
+        label="Consent gap",
+        checks_for="Transfers of ownership, role, or access where the receiving party may need to accept or decline.",
     ),
     CategoryDoc(
         type=IssueType.lifecycle_gap,
@@ -256,7 +270,11 @@ def _extract_intent(spec_text: str, sentences: list[str]) -> ExtractedIntent:
     token_set = set(tokens)
     actors = sorted(_singularize(term) for term in token_set & ACTORS)
     entities = sorted(_singularize(term) for term in token_set & ENTITIES)
-    actions = sorted(_stem_action(term) for term in token_set & ACTION_TERMS)
+    actions = sorted(
+        stem
+        for term in token_set
+        if (stem := _stem_action(term)) in ACTION_TERMS
+    )
     states = sorted(_singularize(term) for term in token_set & STATE_TERMS)
     explicit_rules = [
         sentence
@@ -332,6 +350,19 @@ def _collect_issues(
                 "The spec grants a sensitive action without saying which roles can or cannot perform it.",
                 "Define role-specific permissions and denial behavior for unauthorized actors.",
                 "Which roles are allowed, denied, or conditionally allowed?",
+            )
+        )
+
+    if _has_control_transfer(lowered) and not _has_receiver_consent(lowered):
+        issues.append(
+            _issue(
+                IssueType.consent_gap,
+                Severity.critical,
+                "Receiving party consent is unspecified",
+                _sentence_matching(sentences, r"\b(transfer|ownership|owner|admin access|role|permission|invite)\b"),
+                "A person can receive ownership, control, or elevated access without the spec saying whether they must accept first.",
+                "Define whether the receiving party must accept or decline before the transfer takes effect, and what happens if they do nothing.",
+                "Does the receiving party need to accept before access or ownership changes?",
             )
         )
 
@@ -420,8 +451,7 @@ def _edge_cases(intent: ExtractedIntent, issues: list[SpecIssue]) -> list[EdgeCa
     cases: list[EdgeCase] = []
     actors = intent.actors or ["user"]
     primary_actor = actors[0]
-    entities = intent.entities or ["record"]
-    primary_entity = entities[0]
+    primary_entity = _primary_entity(intent, " ".join(issue.evidence for issue in issues))
 
     if any(issue.type == IssueType.permission_gap for issue in issues):
         cases.append(
@@ -429,6 +459,14 @@ def _edge_cases(intent: ExtractedIntent, issues: list[SpecIssue]) -> list[EdgeCa
                 title="Unauthorized actor attempts the action",
                 scenario=f"A role outside the allowed set tries to modify a {primary_entity}.",
                 expected_behavior="The system blocks the action, explains the denial, and records the attempt when appropriate.",
+            )
+        )
+    if any(issue.type == IssueType.consent_gap for issue in issues):
+        cases.append(
+            EdgeCase(
+                title="Receiver declines or ignores the transfer",
+                scenario=f"{primary_actor.title()} starts a {primary_entity} transfer, but the receiving party does not accept it.",
+                expected_behavior="The system keeps the original owner and permissions unchanged until acceptance rules are satisfied.",
             )
         )
     if any(issue.type == IssueType.lifecycle_gap for issue in issues):
@@ -473,28 +511,40 @@ def _acceptance_tests(
     sentences: list[str],
 ) -> list[AcceptanceTest]:
     tests: list[AcceptanceTest] = []
-    actor = (intent.actors or ["authorized user"])[0]
-    action = (intent.actions or ["complete the action"])[0]
-    entity = (intent.entities or ["item"])[0]
+    spec_text = " ".join(sentences)
+    actor = _primary_actor(intent)
+    entity = _primary_entity(intent, spec_text)
+    action_phrase = _primary_action_phrase(intent, spec_text, entity)
     issue_ids_by_type = {issue.type: issue.id for issue in issues}
 
     tests.append(
         AcceptanceTest(
-            id=stable_id("test", title, "happy", actor, action, entity),
+            id=stable_id("test", title, "happy", actor, action_phrase, entity),
             name="Happy path is explicit",
             given=f"a valid {actor} and a valid {entity}",
-            when=f"the {actor} attempts to {action} the {entity}",
+            when=f"the {actor} attempts to {action_phrase}",
             then="the system completes the action and exposes the resulting state to the user",
             covers_issue_ids=[],
         )
     )
+    if IssueType.consent_gap in issue_ids_by_type:
+        tests.append(
+            AcceptanceTest(
+                id=stable_id("test", title, "consent"),
+                name="Receiver consent is required before control changes",
+                given=f"a pending {entity} transfer sent to a receiving party",
+                when="the receiving party has not accepted it",
+                then="the system keeps ownership, roles, and billing responsibility unchanged",
+                covers_issue_ids=[issue_ids_by_type[IssueType.consent_gap]],
+            )
+        )
     if IssueType.permission_gap in issue_ids_by_type:
         tests.append(
             AcceptanceTest(
                 id=stable_id("test", title, "permission"),
                 name="Unauthorized access is blocked",
-                given=f"a role that is not allowed to {action} the {entity}",
-                when=f"that role attempts to {action} the {entity}",
+                given=f"a role that is not allowed to {action_phrase}",
+                when=f"that role attempts to {action_phrase}",
                 then="the system rejects the action with a clear permission response and no data mutation",
                 covers_issue_ids=[issue_ids_by_type[IssueType.permission_gap]],
             )
@@ -505,7 +555,7 @@ def _acceptance_tests(
                 id=stable_id("test", title, "lifecycle"),
                 name="Terminal states are respected",
                 given=f"a {entity} in an expired, cancelled, completed, or otherwise terminal state",
-                when=f"the {actor} attempts to {action} it",
+                when=f"the {actor} attempts to {action_phrase}",
                 then="the system preserves the terminal state and shows the allowed next step",
                 covers_issue_ids=[issue_ids_by_type[IssueType.lifecycle_gap]],
             )
@@ -527,7 +577,7 @@ def _acceptance_tests(
                 id=stable_id("test", title, "failure"),
                 name="Failure path is recoverable",
                 given="a dependency timeout, network failure, or rejected operation",
-                when=f"the {actor} attempts to {action} the {entity}",
+                when=f"the {actor} attempts to {action_phrase}",
                 then="the system communicates failure, avoids partial success, and provides retry or recovery behavior",
                 covers_issue_ids=[issue_ids_by_type[IssueType.failure_mode_gap]],
             )
@@ -581,10 +631,13 @@ def _rewrite(
     edge_cases: list[EdgeCase],
     tests: list[AcceptanceTest],
 ) -> str:
-    actor = (intent.actors or ["authorized user"])[0]
-    entity = (intent.entities or ["target record"])[0]
-    actions = ", ".join(intent.actions[:4]) or "perform the requested action"
+    spec_text = " ".join(test.when for test in tests)
+    actor = _primary_actor(intent)
+    entity = _primary_entity(intent, spec_text)
+    action_phrase = _primary_action_phrase(intent, spec_text, entity)
+    actions = ", ".join(intent.actions[:4]) or action_phrase
     denied = "Roles outside the allowed set cannot perform the action and receive a clear denial."
+    consent = "Receiving parties must accept before ownership, access, role, or billing responsibility changes."
     lifecycle = "The feature must define valid states, terminal states, and retry or expiry behavior."
     validation = "Invalid, duplicate, unauthorized, or oversized input must be rejected before persistence."
     failure = "Failures must leave the system in a consistent state and expose a retry or recovery path."
@@ -603,6 +656,8 @@ def _rewrite(
         lines.append(f"- Only an explicitly authorized {actor} can act on the {entity}.")
     if any(issue.type == IssueType.permission_gap for issue in issues):
         lines.append(f"- {denied}")
+    if any(issue.type == IssueType.consent_gap for issue in issues):
+        lines.append(f"- {consent}")
     if any(issue.type == IssueType.lifecycle_gap for issue in issues):
         lines.append(f"- {lifecycle}")
     if any(issue.type == IssueType.data_constraint_gap for issue in issues):
@@ -659,7 +714,7 @@ def _verdict(score: int, issues: list[SpecIssue]) -> str:
 
 def _summary(score: int, verdict: str, issues: list[SpecIssue], intent: ExtractedIntent) -> str:
     high_count = sum(1 for issue in issues if issue.severity in {Severity.critical, Severity.high})
-    nouns = ", ".join((intent.entities or top_terms(" ".join(issue.evidence for issue in issues), 3))[:3])
+    nouns = _primary_entity(intent, " ".join(issue.evidence for issue in issues)) if issues else ", ".join(intent.entities[:3])
     if verdict == "compiles":
         return f"This spec is testable enough to build. SpecLint found {len(issues)} minor issues."
     if verdict == "does_not_compile":
@@ -733,6 +788,66 @@ def _mentions_failure_modes(text: str) -> bool:
     return bool(re.search(r"\b(error|fail|fails|failure|fallback|retry|timeout|offline|empty state|denied|invalid|unavailable)\b", text))
 
 
+def _has_control_transfer(text: str) -> bool:
+    has_transfer = bool(re.search(r"\b(transfer|transfers|invite|invites|promote|promotes|demote|demotes|grant|grants|assign|assigns)\b", text))
+    has_control = bool(set(tokenize(text)) & CONTROL_TRANSFER_TERMS)
+    return has_transfer and has_control
+
+
+def _has_receiver_consent(text: str) -> bool:
+    receiver_accepts = bool(
+        re.search(
+            r"\b(new|receiving|recipient|target|invitee)\s+(owner|member|user|admin|party)\b.{0,80}\b(accept|approve|confirm|consent|decline|reject)",
+            text,
+        )
+    )
+    passive_acceptance = bool(re.search(r"\b(must|required to|needs to|has to)\s+(accept|approve|confirm|consent)", text))
+    return receiver_accepts or passive_acceptance
+
+
+def _primary_actor(intent: ExtractedIntent) -> str:
+    for preferred in ("owner", "admin", "member", "user"):
+        if preferred in intent.actors:
+            return preferred
+    return (intent.actors or ["authorized user"])[0]
+
+
+def _primary_entity(intent: ExtractedIntent, text: str) -> str:
+    lowered = text.lower()
+    entity_set = set(intent.entities)
+    if "ownership" in lowered or "ownership" in entity_set:
+        if "workspace" in lowered or "workspace" in entity_set:
+            return "workspace ownership"
+        return "ownership"
+    if "repository" in lowered or "repo" in lowered:
+        return "repository connection"
+    if "invite" in entity_set or "invitation" in entity_set:
+        return "invitation"
+    for preferred in ("workspace", "project", "account", "payment", "order", "file", "data"):
+        if preferred in entity_set:
+            return preferred
+    return (intent.entities or top_terms(text, 1) or ["target record"])[0]
+
+
+def _primary_action_phrase(intent: ExtractedIntent, text: str, entity: str) -> str:
+    actions = set(intent.actions)
+    lowered = text.lower()
+    if "transfer" in actions or "transfer" in lowered:
+        return f"transfer {entity}"
+    if "invite" in actions:
+        return "send an invitation"
+    if "reset" in actions:
+        return f"reset the {entity}"
+    if "connect" in actions:
+        return f"connect the {entity}"
+    if "send" in actions:
+        return "send the required notification"
+    if actions:
+        action = sorted(actions)[0]
+        return f"{action} the {entity}"
+    return f"complete the {entity} workflow"
+
+
 def _has_possible_contradiction(text: str) -> bool:
     sentences = split_sentences(text)
     for sentence in sentences:
@@ -748,6 +863,8 @@ def _has_possible_contradiction(text: str) -> bool:
 
 
 def _singularize(term: str) -> str:
+    if term.endswith("ss"):
+        return term
     if term.endswith("ies"):
         return f"{term[:-3]}y"
     if term.endswith("s") and len(term) > 3:
@@ -756,8 +873,12 @@ def _singularize(term: str) -> str:
 
 
 def _stem_action(term: str) -> str:
+    if term.endswith("ies") and len(term) > 5:
+        return f"{term[:-3]}y"
     if term.endswith("ing") and len(term) > 5:
         return term[:-3]
     if term.endswith("ed") and len(term) > 4:
         return term[:-2]
+    if term.endswith("s") and len(term) > 3:
+        return term[:-1]
     return term

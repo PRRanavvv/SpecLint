@@ -24,6 +24,7 @@ class IssueType(str, Enum):
     missing_edge_case = "missing_edge_case"
     unverifiable_claim = "unverifiable_claim"
     permission_gap = "permission_gap"
+    consent_gap = "consent_gap"
     lifecycle_gap = "lifecycle_gap"
     data_constraint_gap = "data_constraint_gap"
     failure_mode_gap = "failure_mode_gap"
