@@ -16,21 +16,23 @@
             <span>Intent compiler</span>
           </div>
         </div>
-        <nav>
-          <a class="nav-item active" href="#editor">Editor</a>
-          <a class="nav-item" href="#issues">Issues</a>
-          <a class="nav-item" href="#tests">Tests</a>
-        </nav>
+        <div class="review-flow" aria-label="Review flow">
+          <span>1. Draft</span>
+          <span>2. Diagnose</span>
+          <span>3. Tighten</span>
+          <span>4. Re-run</span>
+        </div>
         <div class="score-card">
           <span id="scoreValue">--</span>
           <small id="scoreLabel">No report</small>
         </div>
         <div class="legend">
-          <span><i class="critical"></i> Critical</span>
-          <span><i class="high"></i> High</span>
-          <span><i class="medium"></i> Medium</span>
-          <span><i class="low"></i> Low</span>
+          <span><i class="critical"></i> Critical <b id="criticalCount">0</b></span>
+          <span><i class="high"></i> High <b id="highCount">0</b></span>
+          <span><i class="medium"></i> Medium <b id="mediumCount">0</b></span>
+          <span><i class="low"></i> Low <b id="lowCount">0</b></span>
         </div>
+        <footer class="tiny-footer">Built by Pranav · <a href="https://github.com/PRRanavvv/SpecLint">GitHub</a></footer>
       </aside>
 
       <main class="workspace">
@@ -59,6 +61,17 @@
           <p id="summaryText">Paste a product spec and run SpecLint.</p>
         </section>
 
+        <section class="rubric-strip" aria-label="Score rubric">
+          <div>
+            <strong>Score rubric</strong>
+            <p id="rubricText">Score is out of 100. Penalties appear here after analysis.</p>
+          </div>
+          <div>
+            <strong>Mode</strong>
+            <p id="strictnessHelp">Balanced uses the default rubric for specs that are close to planning.</p>
+          </div>
+        </section>
+
         <div class="main-grid">
           <section id="editor" class="panel editor-panel" aria-label="Spec editor">
             <div class="panel-header">
@@ -66,7 +79,10 @@
                 <p class="eyebrow">Input</p>
                 <h2>Spec</h2>
               </div>
-              <button id="analyzeButton" class="primary">Analyze</button>
+              <div class="button-row">
+                <button id="analyzeButton" class="primary" type="button">Analyze</button>
+                <button id="clearButton" class="ghost-button" type="button">Clear</button>
+              </div>
             </div>
             <form id="specForm" class="editor-form">
               <label>
@@ -75,7 +91,7 @@
               </label>
               <label>
                 <span>Requirement</span>
-                <textarea id="specInput" minlength="20" maxlength="12000" rows="14">Users can invite teammates to a workspace. Guests can view projects. The invite should be easy to accept and should work quickly.</textarea>
+                <textarea id="specInput" minlength="20" maxlength="12000" rows="14" placeholder="Example: Users can invite teammates to a workspace. Guests can view projects. The invite should expire after 7 days and only workspace admins can send it.">Users can invite teammates to a workspace. Guests can view projects. The invite should be easy to accept and should work quickly.</textarea>
               </label>
             </form>
           </section>
@@ -87,6 +103,7 @@
                 <h2>Entities, actions, rules</h2>
               </div>
             </div>
+            <p id="intentNarrative" class="intent-narrative empty-state">No intent extracted yet.</p>
             <div id="intentGrid" class="intent-grid empty-state">No intent extracted yet.</div>
           </section>
         </div>
@@ -100,6 +117,16 @@
             <span id="issueCount" class="count-pill">0 issues</span>
           </div>
           <div id="issuesList" class="issue-list empty-state">No issues yet.</div>
+        </section>
+
+        <section class="panel" aria-label="Lint category guide">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Trust guide</p>
+              <h2>What each check means</h2>
+            </div>
+          </div>
+          <div id="categoryGuide" class="category-guide empty-state">Run analysis to see the lint categories.</div>
         </section>
 
         <div class="lower-grid">
@@ -119,21 +146,42 @@
                 <p class="eyebrow">Build-ready draft</p>
                 <h2>Rewritten spec</h2>
               </div>
-              <button id="copyRewriteButton" class="ghost-button">Copy</button>
+              <div class="button-row">
+                <button id="formattedButton" class="ghost-button active" type="button">Formatted</button>
+                <button id="diffButton" class="ghost-button" type="button">Diff</button>
+                <button id="useRewriteButton" class="ghost-button" type="button">Use + re-run</button>
+                <button id="copyRewriteButton" class="ghost-button" type="button">Copy</button>
+              </div>
             </div>
-            <pre id="rewriteBox" class="rewrite-box empty-state">Run analysis to generate a tighter version.</pre>
+            <div id="rewriteBox" class="rewrite-box empty-state">Run analysis to generate a tighter version.</div>
           </section>
         </div>
 
-        <section class="panel trace-panel" aria-label="Traceability map">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Traceability</p>
-              <h2>Requirements to tests</h2>
+        <div class="lower-grid">
+          <section class="panel trace-panel" aria-label="Traceability map">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Traceability</p>
+                <h2>Requirements to tests</h2>
+              </div>
             </div>
-          </div>
-          <div id="traceList" class="trace-list empty-state">No traceability map yet.</div>
-        </section>
+            <div id="traceList" class="trace-list empty-state">No traceability map yet.</div>
+          </section>
+
+          <section class="panel" aria-label="Run history">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Iteration</p>
+                <h2>Run history</h2>
+              </div>
+              <div class="button-row">
+                <button id="shareButton" class="ghost-button" type="button">Share link</button>
+                <button id="downloadButton" class="ghost-button" type="button">Download MD</button>
+              </div>
+            </div>
+            <div id="historyList" class="history-list empty-state">No previous runs yet.</div>
+          </section>
+        </div>
       </main>
     </div>
 
@@ -141,4 +189,3 @@
     <script src="/static/app.js" type="module"></script>
   </body>
 </html>
-

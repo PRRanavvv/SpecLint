@@ -33,10 +33,24 @@ class SpecLintTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("score", payload)
+        self.assertEqual(payload["score_breakdown"]["base_score"], 100)
+        self.assertIn("severity_counts", payload)
         self.assertTrue(payload["issues"])
         self.assertTrue(payload["rewritten_spec"])
+
+    def test_unless_clause_is_not_contradiction_by_default(self):
+        report = analyze_spec(
+            title="Project deletion",
+            spec_text=(
+                "Project owners can delete projects. "
+                "All project data is removed unless billing records must be kept. "
+                "The user gets a confirmation."
+            ),
+        )
+
+        self.assertNotIn("contradiction", {issue.type.value for issue in report.issues})
+        self.assertIn("score_breakdown", report.model_dump())
 
 
 if __name__ == "__main__":
     unittest.main()
-

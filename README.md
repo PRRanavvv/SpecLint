@@ -25,6 +25,13 @@ Open:
 http://127.0.0.1:8000
 ```
 
+## Stack
+
+- FastAPI backend
+- Vanilla HTML, CSS, and JavaScript frontend
+- Deterministic Python analyzer, no API key required
+- `unittest` + FastAPI `TestClient` for tests
+
 ## API
 
 - `GET /api/health`
@@ -49,4 +56,3 @@ Example request:
 - `tests/test_speclint.py` covers the core analysis and API response.
 
 SpecLint is intentionally offline-first for the MVP. A later version can add an LLM pass, but the current version already gives stable, explainable reports without API keys.
-

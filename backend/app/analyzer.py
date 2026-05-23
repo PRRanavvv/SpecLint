@@ -4,9 +4,12 @@ import re
 
 from .models import (
     AcceptanceTest,
+    CategoryDoc,
     EdgeCase,
     ExtractedIntent,
     IssueType,
+    ScoreBreakdown,
+    ScorePenalty,
     Severity,
     SpecAnalysisResponse,
     SpecIssue,
@@ -161,6 +164,63 @@ LIFECYCLE_ENTITIES = {"invite", "invites", "invitation", "invitations", "order",
 DATA_CONSTRAINT_ENTITIES = {"account", "accounts", "email", "emails", "file", "files", "invoice", "invoices", "payment", "payments", "workspace", "workspaces"}
 SECURITY_TERMS = {"access", "admin", "admins", "delete", "export", "guest", "guests", "invite", "share", "token", "upload"}
 
+SEVERITY_WEIGHTS = {
+    Severity.critical: 28,
+    Severity.high: 17,
+    Severity.medium: 9,
+    Severity.low: 4,
+}
+
+STRICTNESS_MULTIPLIERS = {
+    Strictness.lenient: 0.75,
+    Strictness.balanced: 1.0,
+    Strictness.ruthless: 1.2,
+}
+
+STRICTNESS_NOTES = {
+    Strictness.lenient: "Lenient lowers penalties by 25% and is meant for rough early ideas.",
+    Strictness.balanced: "Balanced uses the default rubric for specs that are close to planning.",
+    Strictness.ruthless: "Ruthless raises penalties by 20% and adds a warning when no hard rules are present.",
+}
+
+CATEGORY_DOCS = [
+    CategoryDoc(
+        type=IssueType.ambiguity,
+        label="Ambiguity",
+        checks_for="Missing actors, unclear references, and wording that can be implemented multiple ways.",
+    ),
+    CategoryDoc(
+        type=IssueType.unverifiable_claim,
+        label="Unverifiable claim",
+        checks_for="Words like fast, easy, simple, or soon that need measurable pass/fail criteria.",
+    ),
+    CategoryDoc(
+        type=IssueType.permission_gap,
+        label="Permission gap",
+        checks_for="Sensitive actions without role boundaries, denial behavior, or abuse controls.",
+    ),
+    CategoryDoc(
+        type=IssueType.lifecycle_gap,
+        label="Lifecycle gap",
+        checks_for="Objects with states such as invited, expired, paid, cancelled, or failed but no transitions.",
+    ),
+    CategoryDoc(
+        type=IssueType.data_constraint_gap,
+        label="Data constraint gap",
+        checks_for="Persistent data without limits, uniqueness, ownership, retention, or validation rules.",
+    ),
+    CategoryDoc(
+        type=IssueType.failure_mode_gap,
+        label="Failure mode gap",
+        checks_for="Happy-path-only specs that omit errors, retries, timeouts, empty states, or recovery.",
+    ),
+    CategoryDoc(
+        type=IssueType.contradiction,
+        label="Contradiction",
+        checks_for="Rules that cannot both be true unless the spec defines explicit precedence.",
+    ),
+]
+
 
 def analyze_spec(title: str, spec_text: str, strictness: Strictness = Strictness.balanced) -> SpecAnalysisResponse:
     sentences = split_sentences(spec_text)
@@ -169,7 +229,7 @@ def analyze_spec(title: str, spec_text: str, strictness: Strictness = Strictness
     edge_cases = _edge_cases(intent, issues)
     acceptance_tests = _acceptance_tests(title, intent, issues, sentences)
     traceability = _traceability(sentences, issues, acceptance_tests)
-    score = _score(issues, strictness)
+    score, score_breakdown = _score(issues, strictness)
     verdict = _verdict(score, issues)
     summary = _summary(score, verdict, issues, intent)
     rewritten_spec = _rewrite(title, intent, issues, edge_cases, acceptance_tests)
@@ -177,6 +237,10 @@ def analyze_spec(title: str, spec_text: str, strictness: Strictness = Strictness
         title=title.strip() or "Untitled spec",
         verdict=verdict,
         score=score,
+        score_breakdown=score_breakdown,
+        severity_counts=_severity_counts(issues),
+        category_docs=CATEGORY_DOCS,
+        strictness_note=STRICTNESS_NOTES[strictness],
         summary=summary,
         intent=intent,
         issues=issues,
@@ -498,7 +562,7 @@ def _traceability(
         matching_issues = [
             issue.test_prompt
             for issue in issues
-            if issue.evidence and issue.evidence in sentence or sentence in issue.evidence
+            if issue.evidence and (issue.evidence in sentence or sentence in issue.evidence)
         ][:3]
         output.append(
             TraceItem(
@@ -552,20 +616,37 @@ def _rewrite(
     return "\n".join(lines)
 
 
-def _score(issues: list[SpecIssue], strictness: Strictness) -> int:
-    weights = {
-        Severity.critical: 28,
-        Severity.high: 17,
-        Severity.medium: 9,
-        Severity.low: 4,
+def _score(issues: list[SpecIssue], strictness: Strictness) -> tuple[int, ScoreBreakdown]:
+    multiplier = STRICTNESS_MULTIPLIERS[strictness]
+    counts = _severity_counts(issues)
+    penalties = [
+        ScorePenalty(
+            severity=severity,
+            count=counts[severity],
+            weight=weight,
+            subtotal=round(counts[severity] * weight * multiplier, 2),
+        )
+        for severity, weight in SEVERITY_WEIGHTS.items()
+        if counts[severity]
+    ]
+    total_penalty = round(sum(penalty.subtotal for penalty in penalties), 2)
+    score = max(0, min(100, round(100 - total_penalty)))
+    breakdown = ScoreBreakdown(
+        strictness=strictness,
+        strictness_multiplier=multiplier,
+        weights=SEVERITY_WEIGHTS,
+        penalties=penalties,
+        total_penalty=total_penalty,
+        explanation="Score is out of 100: 100 minus severity-weighted issue penalties, adjusted by strictness.",
+    )
+    return score, breakdown
+
+
+def _severity_counts(issues: list[SpecIssue]) -> dict[Severity, int]:
+    return {
+        severity: sum(1 for issue in issues if issue.severity == severity)
+        for severity in Severity
     }
-    multiplier = {
-        Strictness.lenient: 0.75,
-        Strictness.balanced: 1.0,
-        Strictness.ruthless: 1.2,
-    }[strictness]
-    penalty = sum(weights[issue.severity] for issue in issues) * multiplier
-    return max(0, min(100, round(100 - penalty)))
 
 
 def _verdict(score: int, issues: list[SpecIssue]) -> str:
@@ -653,9 +734,17 @@ def _mentions_failure_modes(text: str) -> bool:
 
 
 def _has_possible_contradiction(text: str) -> bool:
-    has_universal = bool(re.search(r"\b(all|every|any|always)\b", text))
-    has_restrictive = bool(re.search(r"\b(never|only|except|unless|cannot|can't)\b", text))
-    return has_universal and has_restrictive
+    sentences = split_sentences(text)
+    for sentence in sentences:
+        has_universal = bool(re.search(r"\b(all|every|any|always)\b", sentence))
+        has_hard_block = bool(re.search(r"\b(never|cannot|can't)\b", sentence))
+        has_conditional_exception = bool(re.search(r"\b(unless|except when|except if|as long as)\b", sentence))
+        if has_universal and has_hard_block and not has_conditional_exception:
+            return True
+    has_universal_rule = bool(re.search(r"\b(all|every|any|always)\b", text))
+    has_exclusive_rule = bool(re.search(r"\bonly\b", text))
+    has_exception = bool(re.search(r"\b(unless|except when|except if|as long as)\b", text))
+    return has_universal_rule and has_exclusive_rule and not has_exception
 
 
 def _singularize(term: str) -> str:
@@ -672,4 +761,3 @@ def _stem_action(term: str) -> str:
     if term.endswith("ed") and len(term) > 4:
         return term[:-2]
     return term
-

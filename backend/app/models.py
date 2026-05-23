@@ -47,6 +47,29 @@ class SpecIssue(BaseModel):
     test_prompt: str
 
 
+class ScorePenalty(BaseModel):
+    severity: Severity
+    count: int
+    weight: int
+    subtotal: float
+
+
+class ScoreBreakdown(BaseModel):
+    base_score: int = 100
+    strictness: Strictness
+    strictness_multiplier: float
+    weights: dict[Severity, int]
+    penalties: list[ScorePenalty] = Field(default_factory=list)
+    total_penalty: float
+    explanation: str
+
+
+class CategoryDoc(BaseModel):
+    type: IssueType
+    label: str
+    checks_for: str
+
+
 class ExtractedIntent(BaseModel):
     actors: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
@@ -80,6 +103,10 @@ class SpecAnalysisResponse(BaseModel):
     title: str
     verdict: Literal["compiles", "compiles_with_warnings", "does_not_compile"]
     score: int = Field(ge=0, le=100)
+    score_breakdown: ScoreBreakdown
+    severity_counts: dict[Severity, int]
+    category_docs: list[CategoryDoc]
+    strictness_note: str
     summary: str
     intent: ExtractedIntent
     issues: list[SpecIssue] = Field(default_factory=list)
@@ -92,4 +119,3 @@ class SpecAnalysisResponse(BaseModel):
 class ExampleSpec(BaseModel):
     title: str
     spec_text: str
-
