@@ -41,6 +41,22 @@ python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
 
 For Netlify Drop, uploading `frontend/` is cleanest. Uploading the whole repository also works because the root `_redirects` file points Netlify to the static app.
 
+### Railway Backend
+
+Railway can deploy the FastAPI backend from this same GitHub repository. The root `railway.json` file tells Railway to start the API with:
+
+```bash
+python -m uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+```
+
+After the Railway deployment succeeds, generate a public Railway domain and verify:
+
+```text
+https://your-service.up.railway.app/api/health
+```
+
+Then set Netlify's `SPECLINT_API_BASE_URL` environment variable to the Railway origin, without a trailing slash.
+
 ## Stack
 
 - FastAPI backend
