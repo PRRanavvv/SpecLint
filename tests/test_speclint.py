@@ -59,6 +59,24 @@ class SpecLintTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("product requirement", response.json()["detail"])
 
+    def test_rejects_text_with_no_extractable_requirement_intent(self):
+        client = TestClient(app)
+        response = client.post(
+            "/api/analyze",
+            json={
+                "title": "dsf",
+                "spec_text": (
+                    "skjdi hsdfn shfd sdho fskldf jsriio jorijgsljfgsjrfigo slkf jls "
+                    "lsjd iosjfljsirj gsjvoijpf wljfpw4j4 35slf wsdf lksnv sj "
+                    "lsfklwjsdlf nvslk lksls glwsrflksjdlv jsgjiperjg sio js jsl osnv"
+                ),
+                "strictness": "balanced",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("product requirement", response.json()["detail"])
+
     def test_unless_clause_is_not_contradiction_by_default(self):
         report = analyze_spec(
             title="Project deletion",

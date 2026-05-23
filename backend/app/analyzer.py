@@ -385,6 +385,7 @@ def analyze_spec(
     sentences = split_sentences(spec_text)
     source_sentences = split_sentences(source_spec_text or spec_text)
     intent = _extract_intent(spec_text, sentences)
+    _validate_extracted_intent(intent)
     primary_object = _primary_entity(intent, spec_text, title)
     issues = _collect_issues(title, spec_text, sentences, intent, strictness, primary_object)
     edge_cases = _edge_cases(intent, issues, spec_text, title, primary_object)
@@ -1082,6 +1083,14 @@ def _validate_spec_input(title: str, spec_text: str) -> None:
         raise SpecInputError(
             "SpecLint only runs on product requirements. Name a real feature behavior, actor, action, or object first."
         )
+
+
+def _validate_extracted_intent(intent: ExtractedIntent) -> None:
+    if intent.actors or intent.entities or intent.actions or intent.explicit_rules:
+        return
+    raise SpecInputError(
+        "No product requirement detected. SpecLint needs at least one recognizable actor, action, object, or hard rule."
+    )
 
 
 def _product_signal_count(tokens: list[str]) -> int:
