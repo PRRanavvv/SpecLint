@@ -157,6 +157,33 @@ class SpecLintTests(unittest.TestCase):
         self.assertEqual(report.verdict, "does_not_compile")
         self.assertIn("Primary object: reset link.", report.rewritten_spec)
 
+    def test_file_upload_prefers_file_and_flags_shared_delete_gaps(self):
+        report = analyze_spec(
+            title="File upload",
+            spec_text=(
+                "Users can upload files to their project. "
+                "We support common file types and the upload should be reasonably fast. "
+                "If the upload fails they'll see an error. "
+                "Files can be shared with other project members and deleted by whoever uploaded them. "
+                "Deleted files are gone permanently."
+            ),
+        )
+
+        issue_titles = {issue.title for issue in report.issues}
+        self.assertIn("Supported file types are undefined", issue_titles)
+        self.assertIn("File deletion permissions are underspecified", issue_titles)
+        self.assertIn("Shared file deletion semantics conflict", issue_titles)
+        self.assertIn("Unverifiable language needs a measurable target", issue_titles)
+        self.assertEqual(report.verdict, "does_not_compile")
+        self.assertIn("delete", report.intent.actions)
+        self.assertIn("share", report.intent.actions)
+        self.assertIn("upload", report.intent.actions)
+        self.assertIn("Primary object: file.", report.rewritten_spec)
+        self.assertNotIn("upload the project", report.rewritten_spec)
+        self.assertTrue(
+            any("upload the file" in test.when for test in report.acceptance_tests)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

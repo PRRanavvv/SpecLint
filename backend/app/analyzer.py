@@ -164,6 +164,7 @@ VAGUE_TERMS = {
     "fast",
     "friendly",
     "good",
+    "common file types",
     "intuitive",
     "later",
     "maybe",
@@ -322,15 +323,30 @@ def _collect_issues(
     for term in sorted(VAGUE_TERMS, key=len, reverse=True):
         if term in lowered:
             sentence = _sentence_with(sentences, term)
+            title = (
+                "Supported file types are undefined"
+                if term == "common file types"
+                else "Unverifiable language needs a measurable target"
+            )
+            suggestion = (
+                "List the allowed MIME types or extensions, max size per type, and what error users see for unsupported files."
+                if term == "common file types"
+                else "Replace the vague phrase with a measurable constraint, limit, or user-visible outcome."
+            )
+            question = (
+                "Which exact file types are supported or rejected?"
+                if term == "common file types"
+                else "What exact condition would make this pass or fail?"
+            )
             issues.append(
                 _issue(
                     IssueType.unverifiable_claim,
                     Severity.medium,
-                    "Unverifiable language needs a measurable target",
+                    title,
                     sentence,
                     f"'{term}' cannot be tested without a threshold or observable behavior.",
-                    "Replace the vague phrase with a measurable constraint, limit, or user-visible outcome.",
-                    "What exact condition would make this pass or fail?",
+                    suggestion,
+                    question,
                 )
             )
 
@@ -435,6 +451,32 @@ def _collect_issues(
                 "Removing a person from a project changes access and membership state, but the spec does not say what they see, whether they are notified, or what happens to their existing work.",
                 "Define notification, access revocation timing, created-content ownership, comments, rejoin behavior, and audit history after removal.",
                 "What happens to the removed member and their project data after removal?",
+            )
+        )
+
+    if _has_file_uploader_delete_permission_gap(lowered):
+        issues.append(
+            _issue(
+                IssueType.permission_gap,
+                Severity.high,
+                "File deletion permissions are underspecified",
+                _sentence_matching(sentences, r"\b(whoever uploaded|uploaded them|uploader|deleted by)\b"),
+                "The uploader owns deletion rights, but the spec does not say what happens when the uploader leaves, when an admin needs to remove a file, or when shared recipients still depend on it.",
+                "Define whether uploaders, project admins, owners, and removed members can delete shared files, and what denial behavior applies.",
+                "Who can delete a file after it has been shared or after the uploader leaves?",
+            )
+        )
+
+    if _has_shared_file_permanent_delete_conflict(lowered):
+        issues.append(
+            _issue(
+                IssueType.contradiction,
+                Severity.critical,
+                "Shared file deletion semantics conflict",
+                _sentence_matching(sentences, r"\b(shared|deleted|gone permanently|permanently)\b"),
+                "The spec says files can be shared and also permanently deleted, but it does not define whether deletion removes every shared reference or only the uploader's copy.",
+                "Define whether deleting a shared file removes it for all members, breaks shared links, preserves references, or requires an ownership transfer.",
+                "When a shared file is deleted, what happens to every member's access and references?",
             )
         )
 
@@ -561,7 +603,7 @@ def _collect_issues(
 def _edge_cases(intent: ExtractedIntent, issues: list[SpecIssue]) -> list[EdgeCase]:
     cases: list[EdgeCase] = []
     actors = intent.actors or ["user"]
-    primary_actor = actors[0]
+    primary_actor = _primary_actor(intent, " ".join(issue.evidence for issue in issues))
     primary_entity = _primary_entity(intent, " ".join(issue.evidence for issue in issues))
 
     if any(issue.type == IssueType.permission_gap for issue in issues):
@@ -623,7 +665,7 @@ def _acceptance_tests(
 ) -> list[AcceptanceTest]:
     tests: list[AcceptanceTest] = []
     spec_text = " ".join(sentences)
-    actor = _primary_actor(intent)
+    actor = _primary_actor(intent, spec_text)
     entity = _primary_entity(intent, spec_text)
     action_phrase = _primary_action_phrase(intent, spec_text, entity)
     issue_ids_by_type = {issue.type: issue.id for issue in issues}
@@ -743,7 +785,7 @@ def _rewrite(
     tests: list[AcceptanceTest],
 ) -> str:
     spec_text = " ".join(test.when for test in tests)
-    actor = _primary_actor(intent)
+    actor = _primary_actor(intent, spec_text)
     entity = _primary_entity(intent, spec_text)
     action_phrase = _primary_action_phrase(intent, spec_text, entity)
     actions = ", ".join(intent.actions[:4]) or action_phrase
@@ -960,6 +1002,43 @@ def _has_member_removal_lifecycle_gap(text: str) -> bool:
     return False
 
 
+def _has_file_uploader_delete_permission_gap(text: str) -> bool:
+    has_file_delete_by_uploader = bool(
+        re.search(
+            r"\b(file|files)\b.{0,120}\b(deleted|delete|removed|remove)\b.{0,80}\b(whoever uploaded|uploader|uploaded them|uploaded it)\b"
+            r"|\b(whoever uploaded|uploader|uploaded them|uploaded it)\b.{0,80}\b(delete|deleted|remove|removed)\b.{0,80}\b(file|files)\b",
+            text,
+        )
+    )
+    has_admin_or_departure_policy = bool(
+        re.search(
+            r"\b(admin|owner|moderator)\b.{0,80}\b(delete|remove)\b"
+            r"|\b(uploader|member|user)\b.{0,80}\b(leaves|removed|deactivated|loses access)\b"
+            r"|\b(delete permission|deletion permission|ownership transfer|retained owner)\b",
+            text,
+        )
+    )
+    return has_file_delete_by_uploader and not has_admin_or_departure_policy
+
+
+def _has_shared_file_permanent_delete_conflict(text: str) -> bool:
+    has_shared_file = bool(
+        re.search(r"\b(file|files)\b.{0,120}\b(shared|share)\b", text)
+        or re.search(r"\b(shared|share)\b.{0,120}\b(file|files)\b", text)
+    )
+    has_permanent_delete = bool(
+        re.search(r"\b(deleted|delete|removed|remove)\b.{0,80}\b(permanent|permanently|gone)\b", text)
+        or re.search(r"\b(permanent|permanently|gone)\b.{0,80}\b(deleted|delete|removed|remove)\b", text)
+    )
+    has_shared_delete_policy = bool(
+        re.search(
+            r"\b(for everyone|for all members|all members lose access|shared links? (are )?(removed|revoked|invalidated)|references? (are )?(removed|preserved)|only removes? (the )?uploader|ownership transfers?)\b",
+            text,
+        )
+    )
+    return has_shared_file and has_permanent_delete and not has_shared_delete_policy
+
+
 def _has_password_reset_flow(text: str) -> bool:
     return bool(
         re.search(r"\bpassword\b.{0,80}\breset\b", text)
@@ -1035,7 +1114,16 @@ def _has_receiver_consent(text: str) -> bool:
     return receiver_accepts or passive_acceptance
 
 
-def _primary_actor(intent: ExtractedIntent) -> str:
+def _primary_actor(intent: ExtractedIntent, text: str = "") -> str:
+    lowered = text.lower()
+    for actor, pattern in (
+        ("admin", r"\b(admin|admins)\b.{0,60}\b(can|may|must|attempt|request|invite|upload|delete|transfer|remove|connect|reset)\b"),
+        ("owner", r"\b(owner|owners)\b.{0,60}\b(can|may|must|attempt|request|invite|upload|delete|transfer|remove|connect|reset)\b"),
+        ("member", r"\b(member|members)\b.{0,60}\b(can|may|must|attempt|request|invite|upload|delete|transfer|remove|connect|reset)\b"),
+        ("user", r"\b(user|users)\b.{0,60}\b(can|may|must|attempt|request|invite|upload|delete|transfer|remove|connect|reset|forget|forgets)\b"),
+    ):
+        if actor in intent.actors and re.search(pattern, lowered):
+            return actor
     for preferred in ("owner", "admin", "member", "user"):
         if preferred in intent.actors:
             return preferred
@@ -1049,16 +1137,29 @@ def _primary_entity(intent: ExtractedIntent, text: str) -> str:
         if "workspace" in lowered or "workspace" in entity_set:
             return "workspace ownership"
         return "ownership"
+    if re.search(r"\b(delete|deletes|deleted|deletion|remove|removes|removed)\b.{0,80}\b(account|profile)\b", lowered):
+        return "account"
     if "repository" in lowered or "repo" in lowered:
         return "repository connection"
     if _has_password_reset_flow(lowered):
         return "reset link"
+    if _has_file_workflow(lowered, entity_set):
+        return "file"
     if "invite" in entity_set or "invitation" in entity_set:
         return "invitation"
     for preferred in ("workspace", "project", "account", "payment", "order", "file", "data"):
         if preferred in entity_set:
             return preferred
     return (intent.entities or top_terms(text, 1) or ["target record"])[0]
+
+
+def _has_file_workflow(text: str, entity_set: set[str]) -> bool:
+    if "file" not in entity_set and "files" not in entity_set and not re.search(r"\bfiles?\b", text):
+        return False
+    return bool(
+        re.search(r"\b(upload|uploads|uploaded|share|shares|shared|delete|deletes|deleted|download|downloads|view|views)\b.{0,100}\bfiles?\b", text)
+        or re.search(r"\bfiles?\b.{0,100}\b(upload|uploads|uploaded|share|shares|shared|delete|deletes|deleted|download|downloads|view|views|file types?)\b", text)
+    )
 
 
 def _primary_action_phrase(intent: ExtractedIntent, text: str, entity: str) -> str:
@@ -1070,6 +1171,12 @@ def _primary_action_phrase(intent: ExtractedIntent, text: str, entity: str) -> s
         return "send an invitation"
     if "reset link" == entity:
         return "request a reset link"
+    if "upload" in actions or "upload" in lowered:
+        return f"upload the {entity}"
+    if "share" in actions and entity == "file":
+        return "share the file"
+    if "delete" in actions and entity == "file":
+        return "delete the file"
     if "reset" in actions:
         return f"reset the {entity}"
     if "connect" in actions:
@@ -1110,9 +1217,19 @@ def _stem_action(term: str) -> str:
     if term.endswith("ies") and len(term) > 5:
         return f"{term[:-3]}y"
     if term.endswith("ing") and len(term) > 5:
-        return term[:-3]
+        stem = term[:-3]
+        if stem in ACTION_TERMS:
+            return stem
+        if f"{stem}e" in ACTION_TERMS:
+            return f"{stem}e"
+        return stem
     if term.endswith("ed") and len(term) > 4:
-        return term[:-2]
+        stem = term[:-2]
+        if stem in ACTION_TERMS:
+            return stem
+        if f"{stem}e" in ACTION_TERMS:
+            return f"{stem}e"
+        return stem
     if term.endswith("s") and len(term) > 3:
         return term[:-1]
     return term
