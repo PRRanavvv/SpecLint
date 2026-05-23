@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SpecLint</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Workspace navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">SL</div>
+          <div>
+            <strong>SpecLint</strong>
+            <span>Intent compiler</span>
+          </div>
+        </div>
+        <nav>
+          <a class="nav-item active" href="#editor">Editor</a>
+          <a class="nav-item" href="#issues">Issues</a>
+          <a class="nav-item" href="#tests">Tests</a>
+        </nav>
+        <div class="score-card">
+          <span id="scoreValue">--</span>
+          <small id="scoreLabel">No report</small>
+        </div>
+        <div class="legend">
+          <span><i class="critical"></i> Critical</span>
+          <span><i class="high"></i> High</span>
+          <span><i class="medium"></i> Medium</span>
+          <span><i class="low"></i> Low</span>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Product requirements</p>
+            <h1>Compile vague specs before they become bugs.</h1>
+          </div>
+          <div class="top-actions">
+            <select id="exampleSelect" aria-label="Load example">
+              <option value="">Examples</option>
+            </select>
+            <select id="strictnessSelect" aria-label="Strictness">
+              <option value="balanced">Balanced</option>
+              <option value="lenient">Lenient</option>
+              <option value="ruthless">Ruthless</option>
+            </select>
+          </div>
+        </header>
+
+        <section class="hero-band">
+          <div>
+            <p class="eyebrow">Compiler result</p>
+            <h2 id="verdictText">Waiting for input</h2>
+          </div>
+          <p id="summaryText">Paste a product spec and run SpecLint.</p>
+        </section>
+
+        <div class="main-grid">
+          <section id="editor" class="panel editor-panel" aria-label="Spec editor">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Input</p>
+                <h2>Spec</h2>
+              </div>
+              <button id="analyzeButton" class="primary">Analyze</button>
+            </div>
+            <form id="specForm" class="editor-form">
+              <label>
+                <span>Title</span>
+                <input id="titleInput" maxlength="140" value="Workspace invites" />
+              </label>
+              <label>
+                <span>Requirement</span>
+                <textarea id="specInput" minlength="20" maxlength="12000" rows="14">Users can invite teammates to a workspace. Guests can view projects. The invite should be easy to accept and should work quickly.</textarea>
+              </label>
+            </form>
+          </section>
+
+          <section class="panel intent-panel" aria-label="Extracted intent">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Parsed intent</p>
+                <h2>Entities, actions, rules</h2>
+              </div>
+            </div>
+            <div id="intentGrid" class="intent-grid empty-state">No intent extracted yet.</div>
+          </section>
+        </div>
+
+        <section id="issues" class="panel report-panel" aria-label="Lint issues">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Diagnostics</p>
+              <h2>Lint issues</h2>
+            </div>
+            <span id="issueCount" class="count-pill">0 issues</span>
+          </div>
+          <div id="issuesList" class="issue-list empty-state">No issues yet.</div>
+        </section>
+
+        <div class="lower-grid">
+          <section id="tests" class="panel" aria-label="Acceptance tests">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Verification</p>
+                <h2>Acceptance tests</h2>
+              </div>
+            </div>
+            <div id="testsList" class="test-list empty-state">No tests generated yet.</div>
+          </section>
+
+          <section class="panel" aria-label="Rewritten spec">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Build-ready draft</p>
+                <h2>Rewritten spec</h2>
+              </div>
+              <button id="copyRewriteButton" class="ghost-button">Copy</button>
+            </div>
+            <pre id="rewriteBox" class="rewrite-box empty-state">Run analysis to generate a tighter version.</pre>
+          </section>
+        </div>
+
+        <section class="panel trace-panel" aria-label="Traceability map">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Traceability</p>
+              <h2>Requirements to tests</h2>
+            </div>
+          </div>
+          <div id="traceList" class="trace-list empty-state">No traceability map yet.</div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
+
