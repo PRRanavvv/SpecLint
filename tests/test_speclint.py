@@ -57,7 +57,7 @@ class SpecLintTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 422)
-        self.assertIn("product requirement", response.json()["detail"])
+        self.assertEqual(response.json()["detail"], "IMPROPER INPUT")
 
     def test_rejects_text_with_no_extractable_requirement_intent(self):
         client = TestClient(app)
@@ -75,7 +75,7 @@ class SpecLintTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 422)
-        self.assertIn("product requirement", response.json()["detail"])
+        self.assertEqual(response.json()["detail"], "IMPROPER INPUT")
 
     def test_unless_clause_is_not_contradiction_by_default(self):
         report = analyze_spec(

@@ -15,6 +15,56 @@ const strictnessCopy = {
   ruthless: "Ruthless - pre-engineering handoff, flags everything, expect 8-12 issues on any real spec.",
 };
 
+const productSignalTerms = new Set([
+  "accept",
+  "account",
+  "admin",
+  "allow",
+  "approve",
+  "app",
+  "assign",
+  "cancel",
+  "connect",
+  "create",
+  "customer",
+  "delete",
+  "download",
+  "edit",
+  "email",
+  "enable",
+  "export",
+  "feature",
+  "file",
+  "invite",
+  "login",
+  "member",
+  "notify",
+  "order",
+  "owner",
+  "password",
+  "payment",
+  "permission",
+  "project",
+  "reset",
+  "role",
+  "search",
+  "send",
+  "share",
+  "signup",
+  "system",
+  "team",
+  "token",
+  "upload",
+  "user",
+  "view",
+  "workspace",
+]);
+
+const requirementLanguagePattern =
+  /\b(can|cannot|can't|must|should|shall|will|may|only|never|required|requires|allow|allows|enable|enables|let|lets|prevent|prevents)\b/i;
+const productActionPattern =
+  /\b(accept|approve|assign|cancel|connect|create|delete|download|edit|export|filter|invite|login|notify|pay|purchase|remove|request|reset|search|send|share|sign[ -]?up|submit|transfer|update|upload|view)\b/i;
+
 const els = {
   titleInput: document.querySelector("#titleInput"),
   specInput: document.querySelector("#specInput"),
@@ -58,7 +108,9 @@ async function api(path, options = {}) {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.detail || `Request failed: ${response.status}`);
+    const error = new Error(payload.detail || `Request failed: ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -108,7 +160,13 @@ async function analyze({ recordHistory = true } = {}) {
   const title = els.titleInput.value.trim() || "Untitled spec";
   const specText = els.specInput.value.trim();
   if (specText.length < 20) {
-    toast("Spec needs at least 20 characters.");
+    renderInputRejected();
+    toast("IMPROPER INPUT");
+    return;
+  }
+  if (isImproperInput(title, specText)) {
+    renderInputRejected();
+    toast("IMPROPER INPUT");
     return;
   }
   if (!state.preserveSourceForNextRun) {
@@ -130,13 +188,56 @@ async function analyze({ recordHistory = true } = {}) {
     if (recordHistory) addHistory(report, specText);
     renderReport();
   } catch (error) {
-    renderInputRejected(error.message);
-    toast(error.message);
+    if (error.status === 422) {
+      renderInputRejected();
+      toast("IMPROPER INPUT");
+    } else {
+      toast(error.message);
+    }
   } finally {
     state.preserveSourceForNextRun = false;
     els.analyzeButton.disabled = false;
     els.analyzeButton.textContent = "Analyze";
   }
+}
+
+function isImproperInput(title, specText) {
+  const tokens = rawTokens(specText);
+  const combined = `${title} ${specText}`;
+  if (tokens.length < 6) return true;
+  if (weirdTokenRatio(tokens) >= 0.34) return true;
+  if (productSignalCount(rawTokens(combined)) > 0) return false;
+  return !(requirementLanguagePattern.test(combined) && productActionPattern.test(combined));
+}
+
+function rawTokens(text) {
+  return String(text || "").toLowerCase().match(/[a-z][a-z0-9_-]{1,}/g) || [];
+}
+
+function productSignalCount(tokens) {
+  return new Set(tokens.map(normalizeToken).filter((token) => productSignalTerms.has(token))).size;
+}
+
+function normalizeToken(token) {
+  if (token.endsWith("ies") && token.length > 5) return `${token.slice(0, -3)}y`;
+  if (token.endsWith("ing") && token.length > 5) return token.slice(0, -3);
+  if (token.endsWith("ed") && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith("s") && token.length > 3) return token.slice(0, -1);
+  return token;
+}
+
+function weirdTokenRatio(tokens) {
+  const candidates = tokens.filter((token) => token.length >= 4);
+  if (!candidates.length) return 0;
+  return candidates.filter(looksLikeNoise).length / candidates.length;
+}
+
+function looksLikeNoise(token) {
+  return (
+    (token.length >= 6 && !/[aeiouy]/.test(token)) ||
+    /[bcdfghjklmnpqrstvwxyz]{4,}/.test(token) ||
+    /(.)\1\1/.test(token)
+  );
 }
 
 function addHistory(report, specText) {
@@ -172,28 +273,29 @@ function renderReport() {
   renderHistory();
 }
 
-function renderInputRejected(message) {
+function renderInputRejected() {
   state.report = null;
   els.scoreValue.textContent = "--";
-  els.scoreLabel.textContent = "No report";
-  els.verdictText.textContent = "Input needs a product requirement";
-  els.summaryText.textContent = message;
-  els.rubricText.textContent =
-    "SpecLint skipped analysis because the draft does not contain enough product-spec signal.";
+  els.scoreLabel.textContent = "Improper input";
+  els.verdictText.textContent = "IMPROPER INPUT";
+  els.summaryText.textContent = "Write a real product requirement before running SpecLint.";
+  els.rubricText.textContent = "No score generated. This input was rejected before analysis.";
+  els.strictnessHelp.textContent = strictnessCopy[els.strictnessSelect.value];
   els.intentNarrative.className = "intent-narrative empty-state";
-  els.intentNarrative.textContent =
-    "No intent extracted. Try naming an actor, action, object, and one rule.";
+  els.intentNarrative.textContent = "No intent extracted.";
   els.intentGrid.className = "intent-grid empty-state";
-  els.intentGrid.textContent = "No intent extracted.";
+  els.intentGrid.textContent = "IMPROPER INPUT";
   els.issueCount.textContent = "0 issues";
   els.issuesList.className = "issue-list empty-state";
-  els.issuesList.textContent = "No lint report generated for this input.";
+  els.issuesList.textContent = "IMPROPER INPUT";
   els.testsList.className = "test-list empty-state";
   els.testsList.textContent = "No tests generated.";
   els.traceList.className = "trace-list empty-state";
   els.traceList.textContent = "No traceability map generated.";
   els.rewriteBox.className = "rewrite-box empty-state";
-  els.rewriteBox.textContent = "No rewritten spec generated.";
+  els.rewriteBox.textContent = "IMPROPER INPUT";
+  state.history = [];
+  renderHistory();
   renderSeverityCounts({});
 }
 

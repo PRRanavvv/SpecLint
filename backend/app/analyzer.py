@@ -1065,7 +1065,7 @@ def _validate_spec_input(title: str, spec_text: str) -> None:
     combined_tokens = _raw_tokens(combined)
 
     if len(tokens) < 6:
-        raise SpecInputError("SpecLint needs a product requirement with enough detail to analyze.")
+        raise SpecInputError("IMPROPER INPUT")
 
     weird_ratio = _weird_token_ratio(tokens)
     signal_count = _product_signal_count(combined_tokens)
@@ -1074,23 +1074,16 @@ def _validate_spec_input(title: str, spec_text: str) -> None:
     has_known_intent = bool(set(tokenize(combined)) & (ACTORS | ENTITIES | ACTION_TERMS | STATE_TERMS))
 
     if weird_ratio >= 0.45:
-        raise SpecInputError(
-            "This looks like placeholder or gibberish text, not a product requirement. "
-            "Write one concrete behavior, such as who can do what, to which object, and under what rule."
-        )
+        raise SpecInputError("IMPROPER INPUT")
 
     if signal_count < 2 and not (has_requirement_language and has_product_action) and not has_known_intent:
-        raise SpecInputError(
-            "SpecLint only runs on product requirements. Name a real feature behavior, actor, action, or object first."
-        )
+        raise SpecInputError("IMPROPER INPUT")
 
 
 def _validate_extracted_intent(intent: ExtractedIntent) -> None:
     if intent.actors or intent.entities or intent.actions or intent.explicit_rules:
         return
-    raise SpecInputError(
-        "No product requirement detected. SpecLint needs at least one recognizable actor, action, object, or hard rule."
-    )
+    raise SpecInputError("IMPROPER INPUT")
 
 
 def _product_signal_count(tokens: list[str]) -> int:
