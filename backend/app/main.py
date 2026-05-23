@@ -90,5 +90,6 @@ def analyze(request: SpecAnalysisRequest) -> SpecAnalysisResponse:
     return analyze_spec(
         title=request.title,
         spec_text=request.spec_text,
+        source_spec_text=request.source_spec_text,
         strictness=request.strictness,
     )

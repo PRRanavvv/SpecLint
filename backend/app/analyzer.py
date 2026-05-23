@@ -47,6 +47,7 @@ ENTITIES = {
     "access",
     "comment",
     "comments",
+    "content",
     "data",
     "email",
     "emails",
@@ -140,6 +141,7 @@ STATE_TERMS = {
     "sent",
     "shipped",
     "suspended",
+    "visible",
 }
 
 VAGUE_TERMS = {
@@ -236,13 +238,19 @@ CATEGORY_DOCS = [
 ]
 
 
-def analyze_spec(title: str, spec_text: str, strictness: Strictness = Strictness.balanced) -> SpecAnalysisResponse:
+def analyze_spec(
+    title: str,
+    spec_text: str,
+    strictness: Strictness = Strictness.balanced,
+    source_spec_text: str | None = None,
+) -> SpecAnalysisResponse:
     sentences = split_sentences(spec_text)
+    source_sentences = split_sentences(source_spec_text or spec_text)
     intent = _extract_intent(spec_text, sentences)
     issues = _collect_issues(spec_text, sentences, intent, strictness)
     edge_cases = _edge_cases(intent, issues)
     acceptance_tests = _acceptance_tests(title, intent, issues, sentences)
-    traceability = _traceability(sentences, issues, acceptance_tests)
+    traceability = _traceability(source_sentences, issues, acceptance_tests)
     score, score_breakdown = _score(issues, strictness)
     verdict = _verdict(score, issues)
     summary = _summary(score, verdict, issues, intent)
@@ -366,6 +374,19 @@ def _collect_issues(
             )
         )
 
+    if _has_destructive_confirmation_ambiguity(lowered):
+        issues.append(
+            _issue(
+                IssueType.consent_gap,
+                Severity.critical,
+                "Destructive confirmation consent is ambiguous",
+                _sentence_matching(sentences, r"\b(confirmation email|email before|before deletion|confirm)\b"),
+                "The spec says a destructive action is confirmed or emailed, but not whether the user must actively approve before deletion happens.",
+                "Define whether deletion waits for an explicit click or approval, how long the confirmation is valid, and what happens if the user ignores it.",
+                "Does the user need to click or approve before the destructive action is processed?",
+            )
+        )
+
     if set(intent.entities) & LIFECYCLE_ENTITIES and not _mentions_lifecycle(lowered):
         issues.append(
             _issue(
@@ -376,6 +397,32 @@ def _collect_issues(
                 "Lifecycle objects need states for creation, expiry, cancellation, retry, and completion.",
                 "List the allowed states, transitions, expiry behavior, and terminal states.",
                 "What happens after the object is accepted, expired, cancelled, or retried?",
+            )
+        )
+
+    if _has_shared_content_orphan_gap(lowered):
+        issues.append(
+            _issue(
+                IssueType.lifecycle_gap,
+                Severity.high,
+                "Shared content ownership after deletion is undefined",
+                _sentence_matching(sentences, r"\b(shared content|content remains|visible to other|team members|comments|attribution)\b"),
+                "The account can be deleted while shared content remains, but the spec does not say who owns, edits, attributes, or moderates that content afterward.",
+                "Define post-deletion ownership, attribution labels, edit permissions, comment behavior, and whether content becomes orphaned or transferred.",
+                "Who owns and can edit shared content after the original user is deleted?",
+            )
+        )
+
+    if _has_member_removal_lifecycle_gap(lowered):
+        issues.append(
+            _issue(
+                IssueType.lifecycle_gap,
+                Severity.high,
+                "Member removal lifecycle is undefined",
+                _sentence_matching(sentences, r"\b(remove|removes|removed|revoke|revokes|kick|kicks)\b"),
+                "Removing a person from a project changes access and membership state, but the spec does not say what they see, whether they are notified, or what happens to their existing work.",
+                "Define notification, access revocation timing, created-content ownership, comments, rejoin behavior, and audit history after removal.",
+                "What happens to the removed member and their project data after removal?",
             )
         )
 
@@ -398,7 +445,7 @@ def _collect_issues(
                 IssueType.failure_mode_gap,
                 Severity.medium,
                 "Failure behavior is not specified",
-                sentences[-1] if sentences else spec_text,
+                _failure_mode_evidence(sentences, spec_text),
                 "The happy path is described, but the system behavior is undefined when the action fails.",
                 "Add expected errors, retry behavior, empty states, and recovery paths.",
                 "What should the user see when the operation fails?",
@@ -786,6 +833,67 @@ def _mentions_data_constraints(text: str) -> bool:
 
 def _mentions_failure_modes(text: str) -> bool:
     return bool(re.search(r"\b(error|fail|fails|failure|fallback|retry|timeout|offline|empty state|denied|invalid|unavailable)\b", text))
+
+
+def _failure_mode_evidence(sentences: list[str], fallback: str) -> str:
+    for pattern in (
+        r"\b(email with a link|link to join|invited person gets an email)\b",
+        r"\b(invite|invited|invitation|email)\b",
+        r"\b(remove|removed|delete|deletion|transfer|connect|export|reset|upload|payment)\b",
+        r"\b(can|attempts?|tries?|submits?)\b",
+    ):
+        compiled = re.compile(pattern, re.I)
+        for sentence in sentences:
+            if compiled.search(sentence):
+                return sentence
+    return sentences[-1] if sentences else fallback
+
+
+def _has_destructive_confirmation_ambiguity(text: str) -> bool:
+    has_destructive_action = bool(
+        re.search(r"\b(delete|deletes|deleted|deletion|remove|removes|removed|erase|erases|destroy|destroys)\b", text)
+    )
+    has_confirmation_message = bool(
+        re.search(r"\b(confirmation email|confirmation link|confirm email|email before|receives? (a )?confirmation)\b", text)
+    )
+    has_explicit_pre_approval = bool(
+        re.search(
+            r"\b(must|needs to|required to|has to)\s+(click|approve|confirm|verify)|\b(click|approve|confirm|verify)\s+(the )?(link|email|deletion)\b",
+            text,
+        )
+    )
+    return has_destructive_action and has_confirmation_message and not has_explicit_pre_approval
+
+
+def _has_shared_content_orphan_gap(text: str) -> bool:
+    has_deleted_user = bool(re.search(r"\b(delete|deletes|deleted|deletion|remove|removed)\b.{0,80}\b(user|account|member|profile)\b|\b(user|account|member|profile)\b.{0,80}\b(delete|deletes|deleted|deletion|remove|removed)\b", text))
+    has_persistent_shared_content = bool(
+        re.search(r"\b(shared content|shared files|comments|messages|posts|content)\b.{0,100}\b(remain|remains|visible|kept|preserved|still visible)\b", text)
+        or re.search(r"\b(remain|remains|visible|kept|preserved|still visible)\b.{0,100}\b(shared content|shared files|comments|messages|posts|content)\b", text)
+    )
+    has_ownership_policy = bool(re.search(r"\b(owned by|transferred to|attributed to|orphan|system-owned|workspace-owned|edit permission|moderation)\b", text))
+    return has_deleted_user and has_persistent_shared_content and not has_ownership_policy
+
+
+def _has_member_removal_lifecycle_gap(text: str) -> bool:
+    for sentence in [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]:
+        has_member_removal = bool(
+            re.search(
+                r"\b(remove|removes|removed|revoke|revokes|kick|kicks)\b.{0,80}\b(people|person|member|members|user|users)\b"
+                r"|\b(people|person|member|members|user|users)\b.{0,80}\b(remove|removes|removed|revoked|kicked)\b",
+                sentence,
+            )
+        )
+        has_project_context = bool(re.search(r"\b(project|workspace|team)\b", sentence))
+        has_removal_policy = bool(
+            re.search(
+                r"\b(notif(y|ies|ied|ication)|email|alert|access revoked|lose access|revoked immediately|created content|owned content|comments|audit|rejoin|removed state)\b",
+                sentence,
+            )
+        )
+        if has_member_removal and has_project_context and not has_removal_policy:
+            return True
+    return False
 
 
 def _has_control_transfer(text: str) -> bool:

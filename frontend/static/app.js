@@ -3,6 +3,8 @@ const state = {
   examples: [],
   history: [],
   rewriteView: "formatted",
+  sourceSpecText: null,
+  preserveSourceForNextRun: false,
 };
 
 const strictnessCopy = {
@@ -107,6 +109,9 @@ async function analyze({ recordHistory = true } = {}) {
     toast("Spec needs at least 20 characters.");
     return;
   }
+  if (!state.preserveSourceForNextRun) {
+    state.sourceSpecText = specText;
+  }
   els.analyzeButton.disabled = true;
   els.analyzeButton.textContent = "Analyzing";
   try {
@@ -115,6 +120,7 @@ async function analyze({ recordHistory = true } = {}) {
       body: JSON.stringify({
         title,
         spec_text: specText,
+        source_spec_text: state.sourceSpecText,
         strictness: els.strictnessSelect.value,
       }),
     });
@@ -122,6 +128,7 @@ async function analyze({ recordHistory = true } = {}) {
     if (recordHistory) addHistory(report, specText);
     renderReport();
   } finally {
+    state.preserveSourceForNextRun = false;
     els.analyzeButton.disabled = false;
     els.analyzeButton.textContent = "Analyze";
   }
@@ -415,6 +422,8 @@ function useRewrite({ rerun = false } = {}) {
     toast("Run analysis first.");
     return;
   }
+  state.sourceSpecText = state.sourceSpecText || els.specInput.value.trim();
+  state.preserveSourceForNextRun = true;
   els.specInput.value = state.report.rewritten_spec;
   els.titleInput.value = state.report.title;
   toast(rerun ? "Using rewrite and re-running." : "Rewrite moved into the editor.");
@@ -466,6 +475,7 @@ function loadFromHash() {
     const payload = JSON.parse(decodeURIComponent(location.hash.slice(6)));
     els.titleInput.value = payload.title || "Untitled spec";
     els.specInput.value = payload.spec || "";
+    state.sourceSpecText = payload.spec || null;
     els.strictnessSelect.value = payload.strictness || "balanced";
     els.strictnessHelp.textContent = strictnessCopy[els.strictnessSelect.value];
     return Boolean(payload.spec);
@@ -485,6 +495,8 @@ els.analyzeButton.addEventListener("click", () => {
 
 els.clearButton.addEventListener("click", () => {
   els.specInput.value = "";
+  state.sourceSpecText = null;
+  state.preserveSourceForNextRun = false;
   els.specInput.focus();
 });
 
@@ -498,6 +510,7 @@ els.exampleSelect.addEventListener("change", () => {
   if (!example) return;
   els.titleInput.value = example.title;
   els.specInput.value = example.spec_text;
+  state.sourceSpecText = example.spec_text;
   analyze().catch((error) => toast(error.message));
 });
 
@@ -537,6 +550,7 @@ els.historyList.addEventListener("click", (event) => {
   const run = state.history[Number(button.dataset.index)];
   if (!run) return;
   els.specInput.value = run.specText;
+  state.sourceSpecText = run.specText;
   toast("Previous draft restored.");
 });
 

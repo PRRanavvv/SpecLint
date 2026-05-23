@@ -34,6 +34,7 @@ class IssueType(str, Enum):
 class SpecAnalysisRequest(BaseModel):
     title: str = Field(default="Untitled spec", max_length=140)
     spec_text: str = Field(min_length=20, max_length=12000)
+    source_spec_text: str | None = Field(default=None, max_length=12000)
     strictness: Strictness = Strictness.balanced
 
 

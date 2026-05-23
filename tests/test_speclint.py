@@ -74,6 +74,67 @@ class SpecLintTests(unittest.TestCase):
             any("receiving party has not accepted" in test.when for test in report.acceptance_tests)
         )
 
+    def test_destructive_deletion_confirmation_and_shared_content_are_flagged(self):
+        report = analyze_spec(
+            title="User account deletion",
+            spec_text=(
+                "Members can delete their account from settings. "
+                "The user receives a confirmation email before deletion is processed. "
+                "All personal data is removed, but shared content remains visible to other team members. "
+                "The action cannot be undone."
+            ),
+        )
+
+        issue_titles = {issue.title for issue in report.issues}
+        issue_types = {issue.type.value for issue in report.issues}
+        self.assertIn("Destructive confirmation consent is ambiguous", issue_titles)
+        self.assertIn("Shared content ownership after deletion is undefined", issue_titles)
+        self.assertIn("consent_gap", issue_types)
+        self.assertIn("lifecycle_gap", issue_types)
+        self.assertLess(report.score, 70)
+
+    def test_traceability_uses_source_spec_when_current_draft_is_rewritten(self):
+        source_spec = (
+            "Members can delete their account from settings. "
+            "The user receives a confirmation email before deletion is processed."
+        )
+        rewritten_draft = (
+            "# User account deletion\n\n"
+            "Primary actor: member.\n"
+            "Primary object: account.\n"
+            "Rules:\n"
+            "- The user must confirm deletion before processing."
+        )
+        report = analyze_spec(
+            title="User account deletion",
+            spec_text=rewritten_draft,
+            source_spec_text=source_spec,
+        )
+
+        requirements = [item.requirement for item in report.traceability]
+        self.assertTrue(requirements[0].startswith("R1: Members can delete their account"))
+        self.assertNotIn("Primary actor", " ".join(requirements))
+
+    def test_project_invite_flags_member_removal_and_better_failure_evidence(self):
+        report = analyze_spec(
+            title="Invite someone to a project",
+            spec_text=(
+                "Project admins can invite people to join their project by entering an email address. "
+                "The invited person gets an email with a link to join. "
+                "If they don't have an account they'll be prompted to sign up first. "
+                "Admins can also remove people from the project whenever they want. "
+                "Members can see who else is in the project."
+            ),
+        )
+
+        issue_titles = {issue.title for issue in report.issues}
+        self.assertIn("Member removal lifecycle is undefined", issue_titles)
+        failure_issue = next(
+            issue for issue in report.issues if issue.title == "Failure behavior is not specified"
+        )
+        self.assertIn("email with a link", failure_issue.evidence)
+        self.assertNotIn("Members can see who else is in the project", failure_issue.evidence)
+
 
 if __name__ == "__main__":
     unittest.main()
