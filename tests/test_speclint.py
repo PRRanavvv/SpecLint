@@ -135,6 +135,28 @@ class SpecLintTests(unittest.TestCase):
         self.assertIn("email with a link", failure_issue.evidence)
         self.assertNotIn("Members can see who else is in the project", failure_issue.evidence)
 
+    def test_password_reset_flags_security_and_token_lifecycle_gaps(self):
+        report = analyze_spec(
+            title="Password reset",
+            spec_text=(
+                "If a user forgets their password they can request a reset link from the login page. "
+                "We'll send them an email with a link that lets them set a new password. "
+                "The link should expire after some time. "
+                "Users can't reuse their old password. "
+                "Once they reset it they're logged in automatically."
+            ),
+        )
+
+        issue_titles = {issue.title for issue in report.issues}
+        self.assertIn("Reset link lifecycle is incomplete", issue_titles)
+        self.assertIn("Password reset identity disclosure is undefined", issue_titles)
+        self.assertIn("Password reuse rule is underspecified", issue_titles)
+        self.assertIn("Post-reset session behavior is undefined", issue_titles)
+        self.assertIn("Unverifiable language needs a measurable target", issue_titles)
+        self.assertLess(report.score, 40)
+        self.assertEqual(report.verdict, "does_not_compile")
+        self.assertIn("Primary object: reset link.", report.rewritten_spec)
+
 
 if __name__ == "__main__":
     unittest.main()

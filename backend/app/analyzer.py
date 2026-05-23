@@ -59,6 +59,8 @@ ENTITIES = {
     "invitations",
     "invoice",
     "invoices",
+    "link",
+    "links",
     "message",
     "messages",
     "notification",
@@ -68,6 +70,8 @@ ENTITIES = {
     "ownership",
     "payment",
     "payments",
+    "password",
+    "passwords",
     "profile",
     "project",
     "projects",
@@ -75,10 +79,14 @@ ENTITIES = {
     "reports",
     "role",
     "roles",
+    "session",
+    "sessions",
     "task",
     "tasks",
     "team",
     "teams",
+    "token",
+    "tokens",
     "workspace",
     "workspaces",
 }
@@ -98,17 +106,20 @@ ACTION_TERMS = {
     "download",
     "edit",
     "export",
+    "expire",
     "invite",
     "join",
     "login",
     "pay",
     "promote",
     "publish",
+    "prompt",
     "grant",
     "remove",
     "reset",
     "restore",
     "revoke",
+    "reuse",
     "send",
     "share",
     "sign",
@@ -165,13 +176,14 @@ VAGUE_TERMS = {
     "simple",
     "smart",
     "soon",
+    "some time",
     "things",
     "user-friendly",
 }
 
 PERMISSION_ACTIONS = {"add", "approve", "archive", "assign", "delete", "edit", "export", "invite", "remove", "revoke", "share", "transfer", "update", "view"}
 LIFECYCLE_ENTITIES = {"invite", "invites", "invitation", "invitations", "order", "orders", "ownership", "payment", "payments", "subscription", "subscriptions"}
-DATA_CONSTRAINT_ENTITIES = {"account", "accounts", "email", "emails", "file", "files", "invoice", "invoices", "ownership", "payment", "payments", "workspace", "workspaces"}
+DATA_CONSTRAINT_ENTITIES = {"account", "accounts", "email", "emails", "file", "files", "invoice", "invoices", "ownership", "password", "passwords", "payment", "payments", "token", "tokens", "workspace", "workspaces"}
 SECURITY_TERMS = {"access", "admin", "admins", "delete", "export", "guest", "guests", "invite", "owner", "ownership", "share", "token", "transfer", "upload"}
 CONTROL_TRANSFER_TERMS = {"access", "admin", "control", "guest", "member", "owner", "ownership", "permission", "role"}
 
@@ -426,7 +438,59 @@ def _collect_issues(
             )
         )
 
-    if set(intent.entities) & DATA_CONSTRAINT_ENTITIES and not _mentions_data_constraints(lowered):
+    if _has_reset_link_lifecycle_gap(lowered):
+        issues.append(
+            _issue(
+                IssueType.lifecycle_gap,
+                Severity.high,
+                "Reset link lifecycle is incomplete",
+                _sentence_matching(sentences, r"\b(reset link|link|expire|expires|expired|password)\b"),
+                "Password reset links are security-sensitive lifecycle objects, but the spec does not fully define expiry, one-time use, invalidation, and terminal states.",
+                "Define the exact expiry window, whether links are single-use, whether a new request invalidates older links, and what users see for expired or already-used links.",
+                "When is a reset link valid, invalid, expired, or already used?",
+            )
+        )
+
+    if _has_password_reset_identity_gap(lowered):
+        issues.append(
+            _issue(
+                IssueType.permission_gap,
+                Severity.high,
+                "Password reset identity disclosure is undefined",
+                _sentence_matching(sentences, r"\b(request a reset|reset link|email|forgot|forgets)\b"),
+                "A password reset request can reveal whether an email belongs to an account unless the response and email behavior are specified.",
+                "Define a neutral response for known and unknown emails, plus throttling or abuse controls for repeated reset requests.",
+                "Should the reset request reveal whether the account exists?",
+            )
+        )
+
+    if _has_password_reuse_scope_gap(lowered):
+        issues.append(
+            _issue(
+                IssueType.data_constraint_gap,
+                Severity.medium,
+                "Password reuse rule is underspecified",
+                _sentence_matching(sentences, r"\b(reuse|old password|previous password|password history)\b"),
+                "The phrase old password can mean the current password, the last password, or the full password history, which leads to different validation behavior.",
+                "Define whether users are blocked from reusing only their current password, the last N passwords, or all retained password history.",
+                "Which previous passwords are blocked from reuse?",
+            )
+        )
+
+    if _has_auto_login_session_gap(lowered):
+        issues.append(
+            _issue(
+                IssueType.permission_gap,
+                Severity.high,
+                "Post-reset session behavior is undefined",
+                _sentence_matching(sentences, r"\b(logged in automatically|automatically logged in|auto-?login|logs? (them|the user) in)\b"),
+                "Automatically logging in after a password reset changes authentication state, but the spec does not say what happens to existing sessions, MFA, or the requesting device.",
+                "Define whether reset revokes existing sessions, whether MFA is required, and whether auto-login only applies to the device that completed the reset.",
+                "What sessions remain valid after the password is reset?",
+            )
+        )
+
+    if set(intent.entities) & DATA_CONSTRAINT_ENTITIES and not _mentions_data_constraints(lowered) and not _has_password_reset_flow(lowered):
         issues.append(
             _issue(
                 IssueType.data_constraint_gap,
@@ -896,6 +960,64 @@ def _has_member_removal_lifecycle_gap(text: str) -> bool:
     return False
 
 
+def _has_password_reset_flow(text: str) -> bool:
+    return bool(
+        re.search(r"\bpassword\b.{0,80}\breset\b", text)
+        or re.search(r"\breset\b.{0,80}\b(password|link|email)\b", text)
+        or re.search(r"\b(forgot|forget|forgets)\b.{0,80}\bpassword\b", text)
+    )
+
+
+def _has_reset_link_lifecycle_gap(text: str) -> bool:
+    has_reset_link = _has_password_reset_flow(text) and bool(re.search(r"\b(link|token|email)\b", text))
+    has_measurable_expiry = bool(
+        re.search(r"\b(expire|expires|expired|valid for)\b.{0,50}\b(\d+\s*(minute|minutes|hour|hours|day|days)|\d+\s*(m|h|d)\b)", text)
+    )
+    has_one_time_use = bool(
+        re.search(r"\b(one[- ]time|single[- ]use|used once|only once|cannot be reused|can't be reused|invalidated? after use)\b", text)
+    )
+    has_reissue_policy = bool(
+        re.search(r"\b(new|latest|another|subsequent)\s+(reset )?(link|token|request)\b.{0,80}\b(invalidates?|revokes?|replaces?|cancels?)\b", text)
+        or re.search(r"\b(invalidates?|revokes?|replaces?|cancels?)\b.{0,80}\b(previous|older|old)\s+(reset )?(link|token|request)\b", text)
+    )
+    return has_reset_link and not (has_measurable_expiry and has_one_time_use and has_reissue_policy)
+
+
+def _has_password_reset_identity_gap(text: str) -> bool:
+    if not _has_password_reset_flow(text):
+        return False
+    has_request = bool(re.search(r"\b(request|send|sent|email|link)\b", text))
+    has_neutral_response = bool(
+        re.search(
+            r"\b(same response|same message|generic response|generic message|if (an )?account exists|known and unknown emails|unknown email|do(es)? not reveal|don't reveal|without revealing|enumeration)\b",
+            text,
+        )
+    )
+    has_throttle = bool(re.search(r"\b(rate limit|throttle|cooldown|abuse|captcha|limit reset requests)\b", text))
+    return has_request and not (has_neutral_response and has_throttle)
+
+
+def _has_password_reuse_scope_gap(text: str) -> bool:
+    has_reuse_rule = bool(
+        re.search(r"\b(can't|cannot|must not|not allowed to|should not|shouldn't)\b.{0,40}\breuse\b.{0,80}\b(old|previous|prior)?\s*password\b", text)
+        or re.search(r"\bold password\b", text)
+    )
+    has_scope = bool(
+        re.search(r"\b(current password|existing password|same password|last \d+ passwords?|previous \d+ passwords?|prior \d+ passwords?|password history|retained password)\b", text)
+    )
+    return has_reuse_rule and not has_scope
+
+
+def _has_auto_login_session_gap(text: str) -> bool:
+    has_auto_login = bool(
+        re.search(r"\b(logged in automatically|automatically logged in|auto[- ]login|logs? (them|the user) in)\b", text)
+    )
+    has_session_policy = bool(
+        re.search(r"\b(session|sessions|mfa|2fa|two-factor|two factor|multi-factor|re-auth|reauth|device|trusted device|revoke|invalidate|log out|logout)\b", text)
+    )
+    return has_auto_login and not has_session_policy
+
+
 def _has_control_transfer(text: str) -> bool:
     has_transfer = bool(re.search(r"\b(transfer|transfers|invite|invites|promote|promotes|demote|demotes|grant|grants|assign|assigns)\b", text))
     has_control = bool(set(tokenize(text)) & CONTROL_TRANSFER_TERMS)
@@ -929,6 +1051,8 @@ def _primary_entity(intent: ExtractedIntent, text: str) -> str:
         return "ownership"
     if "repository" in lowered or "repo" in lowered:
         return "repository connection"
+    if _has_password_reset_flow(lowered):
+        return "reset link"
     if "invite" in entity_set or "invitation" in entity_set:
         return "invitation"
     for preferred in ("workspace", "project", "account", "payment", "order", "file", "data"):
@@ -944,6 +1068,8 @@ def _primary_action_phrase(intent: ExtractedIntent, text: str, entity: str) -> s
         return f"transfer {entity}"
     if "invite" in actions:
         return "send an invitation"
+    if "reset link" == entity:
+        return "request a reset link"
     if "reset" in actions:
         return f"reset the {entity}"
     if "connect" in actions:
