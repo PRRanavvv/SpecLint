@@ -303,6 +303,77 @@ CATEGORY_DOCS = [
     ),
 ]
 
+PRODUCT_SIGNAL_TERMS = {
+    "accept",
+    "account",
+    "admin",
+    "allow",
+    "allows",
+    "approve",
+    "app",
+    "application",
+    "assign",
+    "cancel",
+    "checkout",
+    "connect",
+    "create",
+    "customer",
+    "delete",
+    "download",
+    "edit",
+    "email",
+    "enable",
+    "enables",
+    "export",
+    "feature",
+    "file",
+    "invite",
+    "login",
+    "member",
+    "notify",
+    "order",
+    "owner",
+    "password",
+    "payment",
+    "permission",
+    "project",
+    "reset",
+    "role",
+    "search",
+    "send",
+    "share",
+    "signup",
+    "sign",
+    "system",
+    "team",
+    "token",
+    "upload",
+    "user",
+    "view",
+    "workspace",
+}
+
+REQUIREMENT_LANGUAGE = re.compile(
+    r"\b("
+    r"can|cannot|can't|must|should|shall|will|may|only|never|required|requires|"
+    r"allow|allows|enable|enables|let|lets|prevent|prevents"
+    r")\b",
+    re.I,
+)
+
+PRODUCT_ACTION_LANGUAGE = re.compile(
+    r"\b("
+    r"accept|approve|assign|cancel|checkout|connect|create|delete|download|edit|"
+    r"export|filter|invite|login|notify|pay|purchase|remove|request|reset|search|"
+    r"send|share|sign[ -]?up|submit|transfer|update|upload|view"
+    r")\b",
+    re.I,
+)
+
+
+class SpecInputError(ValueError):
+    """Raised when input is not coherent enough to lint as a product spec."""
+
 
 def analyze_spec(
     title: str,
@@ -310,6 +381,7 @@ def analyze_spec(
     strictness: Strictness = Strictness.balanced,
     source_spec_text: str | None = None,
 ) -> SpecAnalysisResponse:
+    _validate_spec_input(title, spec_text)
     sentences = split_sentences(spec_text)
     source_sentences = split_sentences(source_spec_text or spec_text)
     intent = _extract_intent(spec_text, sentences)
@@ -984,6 +1056,59 @@ def _dedupe_issues(issues: list[SpecIssue]) -> list[SpecIssue]:
         deduped.append(issue)
     severity_order = {Severity.critical: 0, Severity.high: 1, Severity.medium: 2, Severity.low: 3}
     return sorted(deduped, key=lambda issue: (severity_order[issue.severity], issue.title))[:12]
+
+
+def _validate_spec_input(title: str, spec_text: str) -> None:
+    tokens = _raw_tokens(spec_text)
+    combined = f"{title} {spec_text}"
+    combined_tokens = _raw_tokens(combined)
+
+    if len(tokens) < 6:
+        raise SpecInputError("SpecLint needs a product requirement with enough detail to analyze.")
+
+    weird_ratio = _weird_token_ratio(tokens)
+    signal_count = _product_signal_count(combined_tokens)
+    has_requirement_language = bool(REQUIREMENT_LANGUAGE.search(combined))
+    has_product_action = bool(PRODUCT_ACTION_LANGUAGE.search(combined))
+    has_known_intent = bool(set(tokenize(combined)) & (ACTORS | ENTITIES | ACTION_TERMS | STATE_TERMS))
+
+    if weird_ratio >= 0.45:
+        raise SpecInputError(
+            "This looks like placeholder or gibberish text, not a product requirement. "
+            "Write one concrete behavior, such as who can do what, to which object, and under what rule."
+        )
+
+    if signal_count < 2 and not (has_requirement_language and has_product_action) and not has_known_intent:
+        raise SpecInputError(
+            "SpecLint only runs on product requirements. Name a real feature behavior, actor, action, or object first."
+        )
+
+
+def _product_signal_count(tokens: list[str]) -> int:
+    signals = set()
+    for token in tokens:
+        normalized = _stem_action(_singularize(token))
+        if token in PRODUCT_SIGNAL_TERMS or normalized in PRODUCT_SIGNAL_TERMS:
+            signals.add(normalized)
+    return len(signals)
+
+
+def _weird_token_ratio(tokens: list[str]) -> float:
+    candidates = [token for token in tokens if len(token) >= 4]
+    if not candidates:
+        return 0.0
+    weird_count = sum(1 for token in candidates if _looks_like_noise(token))
+    return weird_count / len(candidates)
+
+
+def _looks_like_noise(token: str) -> bool:
+    if len(token) >= 6 and not re.search(r"[aeiouy]", token):
+        return True
+    if re.search(r"[bcdfghjklmnpqrstvwxyz]{4,}", token):
+        return True
+    if re.search(r"(.)\1\1", token):
+        return True
+    return False
 
 
 def _sentence_with(sentences: list[str], term: str) -> str:

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .analyzer import analyze_spec
+from .analyzer import SpecInputError, analyze_spec
 from .models import ExampleSpec, SpecAnalysisRequest, SpecAnalysisResponse
 
 
@@ -87,9 +87,12 @@ def examples() -> list[ExampleSpec]:
 
 @app.post("/api/analyze", response_model=SpecAnalysisResponse)
 def analyze(request: SpecAnalysisRequest) -> SpecAnalysisResponse:
-    return analyze_spec(
-        title=request.title,
-        spec_text=request.spec_text,
-        source_spec_text=request.source_spec_text,
-        strictness=request.strictness,
-    )
+    try:
+        return analyze_spec(
+            title=request.title,
+            spec_text=request.spec_text,
+            source_spec_text=request.source_spec_text,
+            strictness=request.strictness,
+        )
+    except SpecInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

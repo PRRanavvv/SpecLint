@@ -129,6 +129,9 @@ async function analyze({ recordHistory = true } = {}) {
     state.report = report;
     if (recordHistory) addHistory(report, specText);
     renderReport();
+  } catch (error) {
+    renderInputRejected(error.message);
+    toast(error.message);
   } finally {
     state.preserveSourceForNextRun = false;
     els.analyzeButton.disabled = false;
@@ -167,6 +170,31 @@ function renderReport() {
   renderTrace(report.traceability);
   renderRewrite();
   renderHistory();
+}
+
+function renderInputRejected(message) {
+  state.report = null;
+  els.scoreValue.textContent = "--";
+  els.scoreLabel.textContent = "No report";
+  els.verdictText.textContent = "Input needs a product requirement";
+  els.summaryText.textContent = message;
+  els.rubricText.textContent =
+    "SpecLint skipped analysis because the draft does not contain enough product-spec signal.";
+  els.intentNarrative.className = "intent-narrative empty-state";
+  els.intentNarrative.textContent =
+    "No intent extracted. Try naming an actor, action, object, and one rule.";
+  els.intentGrid.className = "intent-grid empty-state";
+  els.intentGrid.textContent = "No intent extracted.";
+  els.issueCount.textContent = "0 issues";
+  els.issuesList.className = "issue-list empty-state";
+  els.issuesList.textContent = "No lint report generated for this input.";
+  els.testsList.className = "test-list empty-state";
+  els.testsList.textContent = "No tests generated.";
+  els.traceList.className = "trace-list empty-state";
+  els.traceList.textContent = "No traceability map generated.";
+  els.rewriteBox.className = "rewrite-box empty-state";
+  els.rewriteBox.textContent = "No rewritten spec generated.";
+  renderSeverityCounts({});
 }
 
 function renderSeverityCounts(counts = {}) {

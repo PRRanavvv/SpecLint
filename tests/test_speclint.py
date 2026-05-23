@@ -2,7 +2,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from backend.app.analyzer import analyze_spec
+from backend.app.analyzer import SpecInputError, analyze_spec
 from backend.app.main import app
 
 
@@ -37,6 +37,27 @@ class SpecLintTests(unittest.TestCase):
         self.assertIn("severity_counts", payload)
         self.assertTrue(payload["issues"])
         self.assertTrue(payload["rewritten_spec"])
+
+    def test_rejects_placeholder_noise_before_linting(self):
+        noisy_text = (
+            "aaknjdn fskjdfkjn dsknkan dlj fpowejf sdvnlnwoe fslncv lsdf "
+            "ejadcmsdkf jolsnlfmds mflsndf lsndfl nsdln skdf kalf lkdnf."
+        )
+        with self.assertRaises(SpecInputError):
+            analyze_spec(title="blah blah potato hehe", spec_text=noisy_text)
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/analyze",
+            json={
+                "title": "blah blah potato hehe",
+                "spec_text": noisy_text,
+                "strictness": "ruthless",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("product requirement", response.json()["detail"])
 
     def test_unless_clause_is_not_contradiction_by_default(self):
         report = analyze_spec(
