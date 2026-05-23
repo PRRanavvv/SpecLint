@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import re
 
 from .models import (
@@ -16,7 +17,7 @@ from .models import (
     Strictness,
     TraceItem,
 )
-from .text_utils import compact_quote, contains_any, split_sentences, stable_id, tokenize, top_terms
+from .text_utils import compact_quote, contains_any, split_sentences, stable_id, tokenize
 
 
 ACTORS = {
@@ -77,6 +78,8 @@ ENTITIES = {
     "projects",
     "report",
     "reports",
+    "review",
+    "reviews",
     "role",
     "roles",
     "session",
@@ -107,15 +110,18 @@ ACTION_TERMS = {
     "edit",
     "export",
     "expire",
+    "flag",
     "invite",
     "join",
     "login",
+    "manage",
     "pay",
     "promote",
     "publish",
     "prompt",
     "grant",
     "remove",
+    "request",
     "reset",
     "restore",
     "revoke",
@@ -187,6 +193,53 @@ LIFECYCLE_ENTITIES = {"invite", "invites", "invitation", "invitations", "order",
 DATA_CONSTRAINT_ENTITIES = {"account", "accounts", "email", "emails", "file", "files", "invoice", "invoices", "ownership", "password", "passwords", "payment", "payments", "token", "tokens", "workspace", "workspaces"}
 SECURITY_TERMS = {"access", "admin", "admins", "delete", "export", "guest", "guests", "invite", "owner", "ownership", "share", "token", "transfer", "upload"}
 CONTROL_TRANSFER_TERMS = {"access", "admin", "control", "guest", "member", "owner", "ownership", "permission", "role"}
+PRIMARY_OBJECT_ACTIONS = {
+    "connect",
+    "create",
+    "delete",
+    "edit",
+    "flag",
+    "invite",
+    "manage",
+    "remove",
+    "request",
+    "reset",
+    "send",
+    "share",
+    "submit",
+    "transfer",
+    "upload",
+    "view",
+}
+OBJECT_TOKEN_ALIASES = {
+    "accounts": "account",
+    "comments": "comment",
+    "content": "content",
+    "emails": "email",
+    "files": "file",
+    "guests": "guest",
+    "invites": "invitation",
+    "invitations": "invitation",
+    "links": "link",
+    "members": "member",
+    "messages": "message",
+    "owners": "owner",
+    "people": "member",
+    "person": "member",
+    "persons": "member",
+    "projects": "project",
+    "repo": "repository",
+    "repositories": "repository",
+    "repos": "repository",
+    "reviews": "review",
+    "roles": "role",
+    "tasks": "task",
+    "teammate": "member",
+    "teammates": "member",
+    "tokens": "token",
+    "users": "user",
+    "workspaces": "workspace",
+}
 
 SEVERITY_WEIGHTS = {
     Severity.critical: 28,
@@ -260,14 +313,15 @@ def analyze_spec(
     sentences = split_sentences(spec_text)
     source_sentences = split_sentences(source_spec_text or spec_text)
     intent = _extract_intent(spec_text, sentences)
-    issues = _collect_issues(spec_text, sentences, intent, strictness)
-    edge_cases = _edge_cases(intent, issues)
-    acceptance_tests = _acceptance_tests(title, intent, issues, sentences)
+    primary_object = _primary_entity(intent, spec_text, title)
+    issues = _collect_issues(title, spec_text, sentences, intent, strictness, primary_object)
+    edge_cases = _edge_cases(intent, issues, spec_text, title, primary_object)
+    acceptance_tests = _acceptance_tests(title, intent, issues, sentences, primary_object)
     traceability = _traceability(source_sentences, issues, acceptance_tests)
     score, score_breakdown = _score(issues, strictness)
     verdict = _verdict(score, issues)
-    summary = _summary(score, verdict, issues, intent)
-    rewritten_spec = _rewrite(title, intent, issues, edge_cases, acceptance_tests)
+    summary = _summary(score, verdict, issues, intent, primary_object)
+    rewritten_spec = _rewrite(title, intent, issues, edge_cases, acceptance_tests, primary_object)
     return SpecAnalysisResponse(
         title=title.strip() or "Untitled spec",
         verdict=verdict,
@@ -312,13 +366,28 @@ def _extract_intent(spec_text: str, sentences: list[str]) -> ExtractedIntent:
 
 
 def _collect_issues(
+    title: str,
     spec_text: str,
     sentences: list[str],
     intent: ExtractedIntent,
     strictness: Strictness,
+    primary_object: str,
 ) -> list[SpecIssue]:
     issues: list[SpecIssue] = []
     lowered = spec_text.lower()
+
+    if primary_object == "unspecified":
+        issues.append(
+            _issue(
+                IssueType.ambiguity,
+                Severity.critical,
+                "Primary object could not be determined. Spec may be too vague to compile.",
+                compact_quote(f"{title}. {spec_text}"),
+                "The spec does not clearly name the thing being created, edited, deleted, submitted, viewed, shared, removed, uploaded, sent, or flagged.",
+                "Name the object that receives the main action, then define its states, ownership, and constraints.",
+                "What object is the feature changing?",
+            )
+        )
 
     for term in sorted(VAGUE_TERMS, key=len, reverse=True):
         if term in lowered:
@@ -600,11 +669,17 @@ def _collect_issues(
     return _dedupe_issues(issues)
 
 
-def _edge_cases(intent: ExtractedIntent, issues: list[SpecIssue]) -> list[EdgeCase]:
+def _edge_cases(
+    intent: ExtractedIntent,
+    issues: list[SpecIssue],
+    spec_text: str,
+    title: str,
+    primary_object: str,
+) -> list[EdgeCase]:
     cases: list[EdgeCase] = []
     actors = intent.actors or ["user"]
     primary_actor = _primary_actor(intent, " ".join(issue.evidence for issue in issues))
-    primary_entity = _primary_entity(intent, " ".join(issue.evidence for issue in issues))
+    primary_entity = primary_object or _primary_entity(intent, spec_text, title)
 
     if any(issue.type == IssueType.permission_gap for issue in issues):
         cases.append(
@@ -662,11 +737,12 @@ def _acceptance_tests(
     intent: ExtractedIntent,
     issues: list[SpecIssue],
     sentences: list[str],
+    primary_object: str,
 ) -> list[AcceptanceTest]:
     tests: list[AcceptanceTest] = []
     spec_text = " ".join(sentences)
     actor = _primary_actor(intent, spec_text)
-    entity = _primary_entity(intent, spec_text)
+    entity = primary_object
     action_phrase = _primary_action_phrase(intent, spec_text, entity)
     issue_ids_by_type = {issue.type: issue.id for issue in issues}
 
@@ -783,10 +859,11 @@ def _rewrite(
     issues: list[SpecIssue],
     edge_cases: list[EdgeCase],
     tests: list[AcceptanceTest],
+    primary_object: str,
 ) -> str:
     spec_text = " ".join(test.when for test in tests)
     actor = _primary_actor(intent, spec_text)
-    entity = _primary_entity(intent, spec_text)
+    entity = primary_object
     action_phrase = _primary_action_phrase(intent, spec_text, entity)
     actions = ", ".join(intent.actions[:4]) or action_phrase
     denied = "Roles outside the allowed set cannot perform the action and receive a clear denial."
@@ -865,9 +942,9 @@ def _verdict(score: int, issues: list[SpecIssue]) -> str:
     return "compiles"
 
 
-def _summary(score: int, verdict: str, issues: list[SpecIssue], intent: ExtractedIntent) -> str:
+def _summary(score: int, verdict: str, issues: list[SpecIssue], intent: ExtractedIntent, primary_object: str) -> str:
     high_count = sum(1 for issue in issues if issue.severity in {Severity.critical, Severity.high})
-    nouns = _primary_entity(intent, " ".join(issue.evidence for issue in issues)) if issues else ", ".join(intent.entities[:3])
+    nouns = primary_object if primary_object != "unspecified" else ", ".join(intent.entities[:3])
     if verdict == "compiles":
         return f"This spec is testable enough to build. SpecLint found {len(issues)} minor issues."
     if verdict == "does_not_compile":
@@ -923,6 +1000,10 @@ def _sentence_matching(sentences: list[str], pattern: str) -> str:
         if compiled.search(sentence):
             return sentence
     return sentences[0] if sentences else ""
+
+
+def _raw_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-zA-Z][a-zA-Z0-9_-]*", text.lower())
 
 
 def _has_permission_boundary(text: str) -> bool:
@@ -1130,45 +1211,179 @@ def _primary_actor(intent: ExtractedIntent, text: str = "") -> str:
     return (intent.actors or ["authorized user"])[0]
 
 
-def _primary_entity(intent: ExtractedIntent, text: str) -> str:
-    lowered = text.lower()
-    entity_set = set(intent.entities)
-    if "ownership" in lowered or "ownership" in entity_set:
-        if "workspace" in lowered or "workspace" in entity_set:
-            return "workspace ownership"
-        return "ownership"
-    if re.search(r"\b(delete|deletes|deleted|deletion|remove|removes|removed)\b.{0,80}\b(account|profile)\b", lowered):
-        return "account"
-    if "repository" in lowered or "repo" in lowered:
-        return "repository connection"
-    if _has_password_reset_flow(lowered):
-        return "reset link"
-    if _has_file_workflow(lowered, entity_set):
-        return "file"
-    if "invite" in entity_set or "invitation" in entity_set:
-        return "invitation"
-    for preferred in ("workspace", "project", "account", "payment", "order", "file", "data"):
-        if preferred in entity_set:
-            return preferred
-    return (intent.entities or top_terms(text, 1) or ["target record"])[0]
+def _primary_entity(intent: ExtractedIntent, text: str, title: str = "") -> str:
+    scores = _primary_object_scores(text)
+    if not scores:
+        return "unspecified"
+
+    best_score = max(scores.values())
+    candidates = [label for label, score in scores.items() if score == best_score]
+
+    title_matches = [label for label in candidates if _object_label_in_text(label, title)]
+    if title_matches:
+        candidates = title_matches
+
+    if len(candidates) > 1:
+        rule_scores = {
+            label: sum(1 for rule in intent.explicit_rules if _object_label_in_text(label, rule))
+            for label in candidates
+        }
+        best_rule_score = max(rule_scores.values(), default=0)
+        if best_rule_score:
+            candidates = [label for label in candidates if rule_scores[label] == best_rule_score]
+
+    candidates.sort(key=lambda label: _object_first_index(label, f"{title} {text}"))
+    return _display_object_label(candidates[0], text, title)
 
 
-def _has_file_workflow(text: str, entity_set: set[str]) -> bool:
-    if "file" not in entity_set and "files" not in entity_set and not re.search(r"\bfiles?\b", text):
-        return False
-    return bool(
-        re.search(r"\b(upload|uploads|uploaded|share|shares|shared|delete|deletes|deleted|download|downloads|view|views)\b.{0,100}\bfiles?\b", text)
-        or re.search(r"\bfiles?\b.{0,100}\b(upload|uploads|uploaded|share|shares|shared|delete|deletes|deleted|download|downloads|view|views|file types?)\b", text)
+def _primary_object_scores(text: str) -> Counter[str]:
+    scores: Counter[str] = Counter()
+    subject_counts = _acting_subject_counts(text)
+
+    for sentence in split_sentences(text):
+        tokens = _raw_tokens(sentence)
+        for index, token in enumerate(tokens):
+            action = _stem_action(token)
+            if action in PRIMARY_OBJECT_ACTIONS:
+                receiver = _receiver_after_action(tokens, index, text)
+                if receiver:
+                    scores[receiver] += 1
+        scores.update(_passive_object_scores(tokens, text))
+
+    actor_labels = {_singularize(term) for term in ACTORS}
+    return Counter(
+        {
+            label: score
+            for label, score in scores.items()
+            if score > 0 and (label not in actor_labels or label not in subject_counts or score > subject_counts[label])
+        }
     )
+
+
+def _acting_subject_counts(text: str) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for sentence in split_sentences(text):
+        tokens = _raw_tokens(sentence)
+        for index, token in enumerate(tokens[:-1]):
+            label = _object_label_for_token(token, text)
+            if not label:
+                continue
+            lookahead = tokens[index + 1 : index + 8]
+            if any(_stem_action(next_token) in PRIMARY_OBJECT_ACTIONS for next_token in lookahead) or any(
+                next_token in {"can", "may", "must", "should", "will"} for next_token in lookahead[:3]
+            ):
+                counts[label] += 1
+    return counts
+
+
+def _receiver_after_action(tokens: list[str], action_index: int, text: str) -> str | None:
+    skip_tokens = {
+        "a",
+        "an",
+        "another",
+        "common",
+        "new",
+        "old",
+        "own",
+        "requested",
+        "required",
+        "some",
+        "it",
+        "the",
+        "their",
+        "them",
+        "this",
+        "those",
+        "to",
+    }
+    stop_tokens = {"after", "before", "by", "for", "from", "if", "in", "into", "of", "on", "when", "where", "with"}
+    for token in tokens[action_index + 1 : action_index + 9]:
+        if token in skip_tokens or _stem_action(token) in PRIMARY_OBJECT_ACTIONS:
+            continue
+        if token in stop_tokens:
+            return None
+        label = _object_label_for_token(token, text)
+        if label:
+            return label
+    return None
+
+
+def _passive_object_scores(tokens: list[str], text: str) -> Counter[str]:
+    scores: Counter[str] = Counter()
+    for index, token in enumerate(tokens):
+        label = _object_label_for_token(token, text)
+        if not label:
+            continue
+        for next_index, next_token in enumerate(tokens[index + 1 : index + 12], start=index + 1):
+            action = _stem_action(next_token)
+            prefix = tokens[index + 1 : next_index]
+            if action in PRIMARY_OBJECT_ACTIONS and any(aux in prefix for aux in {"are", "be", "been", "being", "is", "was", "were"}):
+                scores[label] += 1
+    for index, token in enumerate(tokens[:-1]):
+        action = _stem_action(token)
+        if action in PRIMARY_OBJECT_ACTIONS:
+            label = _object_label_for_token(tokens[index + 1], text)
+            if label:
+                scores[label] += 1
+    return scores
+
+
+def _object_label_for_token(token: str, text: str) -> str | None:
+    token = token.lower()
+    base = OBJECT_TOKEN_ALIASES.get(token, _singularize(token))
+    if _has_password_reset_flow(text) and base in {"link", "password", "token"}:
+        return "password reset token"
+    candidate_labels = {
+        *(_singularize(term) for term in ENTITIES),
+        *(_singularize(term) for term in ACTORS),
+        *OBJECT_TOKEN_ALIASES.values(),
+        "repository",
+    }
+    if base in candidate_labels:
+        return base
+    return None
+
+
+def _object_label_in_text(label: str, text: str) -> bool:
+    normalized = text.lower()
+    if label == "password reset token":
+        return bool(re.search(r"\b(password reset|reset link|reset token|password|link|token)\b", normalized))
+    return bool(re.search(rf"\b{re.escape(label)}s?\b", normalized))
+
+
+def _object_first_index(label: str, text: str) -> int:
+    normalized = text.lower()
+    if label == "password reset token":
+        positions = [
+            position
+            for term in ("password reset", "reset link", "reset token", "password", "link", "token")
+            if (position := normalized.find(term)) >= 0
+        ]
+        return min(positions) if positions else 10_000
+    match = re.search(rf"\b{re.escape(label)}s?\b", normalized)
+    return match.start() if match else 10_000
+
+
+def _display_object_label(label: str, text: str, title: str) -> str:
+    lowered = f"{title} {text}".lower()
+    if label == "ownership" and "workspace" in lowered:
+        return "workspace ownership"
+    if label == "repository":
+        return "repository connection" if "connect" in lowered else "repository"
+    return label
 
 
 def _primary_action_phrase(intent: ExtractedIntent, text: str, entity: str) -> str:
     actions = set(intent.actions)
     lowered = text.lower()
+    if entity == "unspecified":
+        return "complete the requested action"
     if "transfer" in actions or "transfer" in lowered:
         return f"transfer {entity}"
     if "invite" in actions:
         return "send an invitation"
+    if entity == "password reset token":
+        return "request a password reset token"
     if "reset link" == entity:
         return "request a reset link"
     if "upload" in actions or "upload" in lowered:

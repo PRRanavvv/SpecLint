@@ -155,7 +155,8 @@ class SpecLintTests(unittest.TestCase):
         self.assertIn("Unverifiable language needs a measurable target", issue_titles)
         self.assertLess(report.score, 40)
         self.assertEqual(report.verdict, "does_not_compile")
-        self.assertIn("Primary object: reset link.", report.rewritten_spec)
+        self.assertIn("Primary object: password reset token.", report.rewritten_spec)
+        self.assertNotIn("reset the password reset token", report.rewritten_spec)
 
     def test_file_upload_prefers_file_and_flags_shared_delete_gaps(self):
         report = analyze_spec(
@@ -182,6 +183,33 @@ class SpecLintTests(unittest.TestCase):
         self.assertNotIn("upload the project", report.rewritten_spec)
         self.assertTrue(
             any("upload the file" in test.when for test in report.acceptance_tests)
+        )
+
+    def test_primary_object_uses_action_receivers_and_never_actor_fallback(self):
+        review_report = analyze_spec(
+            title="Review moderation",
+            spec_text="Users can edit, delete, and share a review.",
+        )
+        member_report = analyze_spec(
+            title="Team members",
+            spec_text="Admins can invite, remove, and manage members.",
+        )
+        vague_report = analyze_spec(
+            title="Vague workflow",
+            spec_text="Users can view and edit whenever needed.",
+        )
+
+        self.assertIn("Primary object: review.", review_report.rewritten_spec)
+        self.assertIn("Primary object: member.", member_report.rewritten_spec)
+        self.assertIn("Primary object: unspecified.", vague_report.rewritten_spec)
+        self.assertIn(
+            "Primary object could not be determined. Spec may be too vague to compile.",
+            {issue.title for issue in vague_report.issues},
+        )
+        self.assertEqual(vague_report.verdict, "does_not_compile")
+        self.assertNotIn("Primary object: user.", vague_report.rewritten_spec)
+        self.assertTrue(
+            any("complete the requested action" in test.when for test in vague_report.acceptance_tests)
         )
 
 
