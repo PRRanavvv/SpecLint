@@ -40,6 +40,8 @@ ACTORS = {
     "teammates",
     "user",
     "users",
+    "viewer",
+    "viewers",
 }
 
 ENTITIES = {
@@ -115,6 +117,7 @@ ACTION_TERMS = {
     "join",
     "login",
     "manage",
+    "open",
     "pay",
     "promote",
     "publish",
@@ -201,6 +204,7 @@ PRIMARY_OBJECT_ACTIONS = {
     "flag",
     "invite",
     "manage",
+    "open",
     "remove",
     "request",
     "reset",
@@ -420,8 +424,8 @@ def _extract_intent(spec_text: str, sentences: list[str]) -> ExtractedIntent:
     entities = sorted(_singularize(term) for term in token_set & ENTITIES)
     actions = sorted(
         stem
-        for term in token_set
-        if (stem := _stem_action(term)) in ACTION_TERMS
+        for index, term in enumerate(tokens)
+        if (stem := _action_from_token(tokens, index)) in ACTION_TERMS
     )
     states = sorted(_singularize(term) for term in token_set & STATE_TERMS)
     explicit_rules = [
@@ -632,6 +636,19 @@ def _collect_issues(
                 "Password reset links are security-sensitive lifecycle objects, but the spec does not fully define expiry, one-time use, invalidation, and terminal states.",
                 "Define the exact expiry window, whether links are single-use, whether a new request invalidates older links, and what users see for expired or already-used links.",
                 "When is a reset link valid, invalid, expired, or already used?",
+            )
+        )
+
+    if _has_public_link_lifecycle_gap(lowered):
+        issues.append(
+            _issue(
+                IssueType.lifecycle_gap,
+                Severity.high,
+                "Public link lifecycle is incomplete",
+                _sentence_matching(sentences, r"\b(public link|public share|share link|without signing in|without login)\b"),
+                "A public link can grant unauthenticated access, but the spec does not say when it expires, who can revoke it, or what invalidates existing links.",
+                "Define expiry, revocation, link rotation, access after role changes, and behavior when the project is archived or deleted.",
+                "When is a public link valid, expired, revoked, rotated, or invalidated?",
             )
         )
 
@@ -1270,6 +1287,21 @@ def _has_reset_link_lifecycle_gap(text: str) -> bool:
     return has_reset_link and not (has_measurable_expiry and has_one_time_use and has_reissue_policy)
 
 
+def _has_public_link_lifecycle_gap(text: str) -> bool:
+    has_public_link = bool(
+        re.search(r"\b(public|shareable|shared)\b.{0,40}\blink\b", text)
+        or re.search(r"\blink\b.{0,40}\b(public|shareable|shared)\b", text)
+        or re.search(r"\bwithout (signing in|login|logging in|authentication|auth)\b", text)
+    )
+    has_lifecycle_policy = bool(
+        re.search(
+            r"\b(expire|expires|expired|expiry|valid for|revoked?|disabled?|invalidated?|rotate|rotated|regenerate|archived?|deleted?)\b",
+            text,
+        )
+    )
+    return has_public_link and not has_lifecycle_policy
+
+
 def _has_password_reset_identity_gap(text: str) -> bool:
     if not _has_password_reset_flow(text):
         return False
@@ -1575,3 +1607,13 @@ def _stem_action(term: str) -> str:
     if term.endswith("s") and len(term) > 3:
         return term[:-1]
     return term
+
+
+def _action_from_token(tokens: list[str], index: int) -> str:
+    token = tokens[index]
+    stem = _stem_action(token)
+    next_token = tokens[index + 1] if index + 1 < len(tokens) else ""
+    previous_token = tokens[index - 1] if index > 0 else ""
+    if stem == "sign" and (next_token == "in" or token in {"signin", "signing"}):
+        return "login" if previous_token != "without" else ""
+    return stem

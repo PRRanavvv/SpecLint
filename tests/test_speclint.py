@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.analyzer import SpecInputError, analyze_spec
 from backend.app.main import app
+from backend.app.models import Strictness
 
 
 class SpecLintTests(unittest.TestCase):
@@ -37,6 +38,26 @@ class SpecLintTests(unittest.TestCase):
         self.assertIn("severity_counts", payload)
         self.assertTrue(payload["issues"])
         self.assertTrue(payload["rewritten_spec"])
+
+    def test_public_share_links_flag_lifecycle_and_do_not_treat_signing_in_as_action(self):
+        report = analyze_spec(
+            title="Public share links",
+            spec_text=(
+                "Users can share any project with a public link. "
+                "The link should be easy to copy and safe to use. "
+                "Viewers can open the project without signing in."
+            ),
+            strictness=Strictness.ruthless,
+        )
+
+        issue_titles = {issue.title for issue in report.issues}
+        self.assertIn("Permission boundary is underspecified", issue_titles)
+        self.assertIn("Public link lifecycle is incomplete", issue_titles)
+        self.assertIn("Security and abuse controls are unstated", issue_titles)
+        self.assertIn("open", report.intent.actions)
+        self.assertIn("share", report.intent.actions)
+        self.assertNotIn("sign", report.intent.actions)
+        self.assertLess(report.score, 35)
 
     def test_rejects_placeholder_noise_before_linting(self):
         noisy_text = (
