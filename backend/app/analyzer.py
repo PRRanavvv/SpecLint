@@ -594,9 +594,22 @@ def _collect_issues(
                 Severity.high,
                 "Member removal lifecycle is undefined",
                 _sentence_matching(sentences, r"\b(remove|removes|removed|revoke|revokes|kick|kicks)\b"),
-                "Removing a person from a project changes access and membership state, but the spec does not say what they see, whether they are notified, or what happens to their existing work.",
+                "Removing a person from a workspace changes access and membership state, but the spec does not say whether the removed member is notified, whether they can rejoin, or what happens to their existing work.",
                 "Define notification, access revocation timing, created-content ownership, comments, rejoin behavior, and audit history after removal.",
                 "What happens to the removed member and their project data after removal?",
+            )
+        )
+
+    if _has_member_removal_permission_scope_gap(lowered):
+        issues.append(
+            _issue(
+                IssueType.permission_gap,
+                Severity.high,
+                "Protected member removal rules are undefined",
+                _sentence_matching(sentences, r"\b(remove|removes|removed|revoke|revokes|kick|kicks)\b"),
+                "Admins can remove members, but the spec does not say whether owners, other admins, the current user, or the last workspace admin are protected.",
+                "Define whether admins can remove themselves, owners, other admins, invited users, suspended users, and the last remaining admin.",
+                "Which member roles or states cannot be removed by a normal admin?",
             )
         )
 
@@ -691,7 +704,12 @@ def _collect_issues(
             )
         )
 
-    if set(intent.entities) & DATA_CONSTRAINT_ENTITIES and not _mentions_data_constraints(lowered) and not _has_password_reset_flow(lowered):
+    if (
+        set(intent.entities) & DATA_CONSTRAINT_ENTITIES
+        and not _mentions_data_constraints(lowered)
+        and not _has_password_reset_flow(lowered)
+        and not _is_member_removal_flow(lowered)
+    ):
         issues.append(
             _issue(
                 IssueType.data_constraint_gap,
@@ -1151,7 +1169,7 @@ def _raw_tokens(text: str) -> list[str]:
 
 
 def _has_permission_boundary(text: str) -> bool:
-    return bool(re.search(r"\b(role|permission|allowed|not allowed|cannot|can't|only|admin|owner|member|guest|authorized|unauthorized)\b", text))
+    return bool(re.search(r"\b(role|roles|permission|permissions|allowed|not allowed|cannot|can't|only|admins?|owners?|authorized|unauthorized)\b", text))
 
 
 def _mentions_lifecycle(text: str) -> bool:
@@ -1225,6 +1243,31 @@ def _has_member_removal_lifecycle_gap(text: str) -> bool:
         if has_member_removal and has_project_context and not has_removal_policy:
             return True
     return False
+
+
+def _is_member_removal_flow(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(remove|removes|removed|revoke|revokes|kick|kicks)\b.{0,80}\b(people|person|member|members|user|users)\b"
+            r"|\b(people|person|member|members|user|users)\b.{0,80}\b(remove|removes|removed|revoked|kicked)\b",
+            text,
+        )
+    )
+
+
+def _has_member_removal_permission_scope_gap(text: str) -> bool:
+    if not _is_member_removal_flow(text) or not re.search(r"\b(workspace|project|team)\b", text):
+        return False
+    has_protected_scope = bool(
+        re.search(
+            r"\b(owner|owners|admin|admins|self|themselves|last admin|sole admin|invited|pending|suspended|deactivated)\b"
+            r".{0,100}\b(cannot|can't|must not|not allowed|protected|except|unless|only)\b"
+            r"|\b(cannot|can't|must not|not allowed|protected|except|unless|only)\b"
+            r".{0,100}\b(owner|owners|admin|admins|self|themselves|last admin|sole admin|invited|pending|suspended|deactivated)\b",
+            text,
+        )
+    )
+    return not has_protected_scope
 
 
 def _has_file_uploader_delete_permission_gap(text: str) -> bool:

@@ -195,6 +195,26 @@ class SpecLintTests(unittest.TestCase):
         self.assertIn("email with a link", failure_issue.evidence)
         self.assertNotIn("Members can see who else is in the project", failure_issue.evidence)
 
+    def test_member_removal_uses_specific_scope_issue_instead_of_generic_permission_and_data_noise(self):
+        report = analyze_spec(
+            title="Team member removal",
+            spec_text=(
+                "Admins can remove members from a workspace. "
+                "Removed members lose access immediately and the team is notified. "
+                "The process should be simple."
+            ),
+            strictness=Strictness.ruthless,
+        )
+
+        issue_titles = {issue.title for issue in report.issues}
+        self.assertIn("Member removal lifecycle is undefined", issue_titles)
+        self.assertIn("Protected member removal rules are undefined", issue_titles)
+        self.assertIn("Security and abuse controls are unstated", issue_titles)
+        self.assertNotIn("Permission boundary is underspecified", issue_titles)
+        self.assertNotIn("Data constraints are missing", issue_titles)
+        self.assertEqual(report.intent.actions, ["remove"])
+        self.assertLess(report.score, 35)
+
     def test_password_reset_flags_security_and_token_lifecycle_gaps(self):
         report = analyze_spec(
             title="Password reset",
