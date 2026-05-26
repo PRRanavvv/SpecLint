@@ -45,7 +45,7 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: clamp(212px, 16vw, 248px) minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -188,13 +188,13 @@ label span,
 }
 
 .workspace {
-  width: min(1500px, 100%);
-  padding: 24px;
+  width: min(1480px, 100%);
+  margin: 0 auto;
+  padding: clamp(20px, 2vw, 34px);
 }
 
 .topbar,
-.panel-header,
-.top-actions {
+.panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -202,6 +202,9 @@ label span,
 }
 
 .topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  align-items: start;
   margin-bottom: 18px;
 }
 
@@ -230,11 +233,16 @@ h2 {
   color: var(--muted);
 }
 
-.top-actions,
 .button-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.top-actions {
+  display: grid;
+  gap: 8px;
+  width: 100%;
 }
 
 input,
@@ -305,9 +313,9 @@ textarea:focus {
 }
 
 .hero-band {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.65fr) minmax(300px, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 24px;
   min-height: 108px;
   padding: 20px;
@@ -315,7 +323,6 @@ textarea:focus {
 }
 
 .hero-band p:last-child {
-  max-width: 620px;
   color: #3d494c;
   line-height: 1.5;
 }
@@ -342,15 +349,15 @@ textarea:focus {
 .lower-grid {
   display: grid;
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .main-grid {
-  grid-template-columns: minmax(380px, 0.92fr) minmax(360px, 1.08fr);
+  grid-template-columns: repeat(2, minmax(380px, 1fr));
 }
 
 .lower-grid {
-  grid-template-columns: minmax(360px, 0.95fr) minmax(360px, 1.05fr);
+  grid-template-columns: repeat(2, minmax(360px, 1fr));
   margin-top: 18px;
 }
 
@@ -395,7 +402,7 @@ label span {
 
 .intent-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 12px;
   padding: 16px;
 }
@@ -467,7 +474,7 @@ label span {
 
 .category-guide {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   padding: 16px;
 }
@@ -500,7 +507,7 @@ label span {
 
 .issue-grid {
   display: grid;
-  grid-template-columns: minmax(160px, 0.45fr) minmax(240px, 1fr);
+  grid-template-columns: minmax(130px, 0.28fr) minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -655,10 +662,14 @@ label span {
   }
 
   .topbar,
-  .hero-band,
   .panel-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .topbar,
+  .hero-band {
+    grid-template-columns: 1fr;
   }
 
   .intent-grid,
