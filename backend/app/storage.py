@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from .models import (
     DecisionStatus,
     SpecAnalysisResponse,
     Strictness,
+    ReviewResolutionRequest,
     SuppressionCreateRequest,
     SuppressionRecord,
     SuppressionReopenRequest,
@@ -68,6 +70,8 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             issue_title TEXT NOT NULL,
             evidence_snapshot TEXT NOT NULL,
             evidence_hash TEXT NOT NULL,
+            raw_evidence_hash TEXT,
+            normalized_evidence_hash TEXT,
             owner TEXT NOT NULL,
             reason TEXT NOT NULL,
             expires_at TEXT NOT NULL,
@@ -98,11 +102,16 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             issue_title TEXT NOT NULL,
             evidence_snapshot TEXT NOT NULL,
             evidence_hash TEXT NOT NULL,
+            raw_evidence_hash TEXT,
+            normalized_evidence_hash TEXT,
             owner TEXT NOT NULL,
             decision_note TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'decided',
             created_by TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            reopened_by TEXT,
+            reopened_at TEXT,
+            reopened_reason TEXT
         );
 
         CREATE INDEX IF NOT EXISTS decisions_spec_version_idx
@@ -115,7 +124,25 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             ON decisions (spec_version_id, issue_id);
         """
     )
+    _ensure_column(connection, "suppressions", "raw_evidence_hash", "TEXT")
+    _ensure_column(connection, "suppressions", "normalized_evidence_hash", "TEXT")
+    _ensure_column(connection, "decisions", "raw_evidence_hash", "TEXT")
+    _ensure_column(connection, "decisions", "normalized_evidence_hash", "TEXT")
+    _ensure_column(connection, "decisions", "reopened_by", "TEXT")
+    _ensure_column(connection, "decisions", "reopened_at", "TEXT")
+    _ensure_column(connection, "decisions", "reopened_reason", "TEXT")
     connection.commit()
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def save_spec_version(
@@ -160,6 +187,7 @@ def save_spec_version(
                 now,
             ),
         )
+        _sync_review_artifacts(connection, report, spec_version_id, now)
         connection.commit()
     return spec_version_id
 
@@ -185,6 +213,8 @@ def list_suppressions(
         conditions.append("status = 'active'")
         conditions.append("expires_at < ?")
         params.append(today)
+    elif status == SuppressionStatus.pending_review:
+        conditions.append("status = 'pending_review'")
     elif status == SuppressionStatus.reopened:
         conditions.append("status = 'reopened'")
 
@@ -204,7 +234,8 @@ def list_suppressions(
 
 def create_suppression(payload: SuppressionCreateRequest) -> SuppressionRecord:
     evidence_snapshot = compact_quote(payload.evidence_snapshot, limit=240)
-    evidence_hash = payload.evidence_hash or _hash_text(evidence_snapshot)
+    raw_evidence_hash, normalized_evidence_hash = _evidence_hashes(evidence_snapshot)
+    evidence_hash = payload.evidence_hash or normalized_evidence_hash
     created_by = payload.created_by or payload.owner
     now = _now()
     with _connect() as connection:
@@ -214,7 +245,7 @@ def create_suppression(payload: SuppressionCreateRequest) -> SuppressionRecord:
             FROM suppressions
             WHERE spec_version_id = ?
               AND issue_id = ?
-              AND status = 'active'
+              AND status IN ('active', 'pending_review')
             """,
             (payload.spec_version_id, payload.issue_id),
         ).fetchone()
@@ -227,9 +258,12 @@ def create_suppression(payload: SuppressionCreateRequest) -> SuppressionRecord:
                     issue_title = ?,
                     evidence_snapshot = ?,
                     evidence_hash = ?,
+                    raw_evidence_hash = ?,
+                    normalized_evidence_hash = ?,
                     owner = ?,
                     reason = ?,
                     expires_at = ?,
+                    status = 'active',
                     created_by = ?
                 WHERE id = ?
                 """,
@@ -239,6 +273,8 @@ def create_suppression(payload: SuppressionCreateRequest) -> SuppressionRecord:
                     payload.issue_title,
                     evidence_snapshot,
                     evidence_hash,
+                    raw_evidence_hash,
+                    normalized_evidence_hash,
                     payload.owner,
                     payload.reason,
                     payload.expires_at.isoformat(),
@@ -260,6 +296,8 @@ def create_suppression(payload: SuppressionCreateRequest) -> SuppressionRecord:
                     issue_title,
                     evidence_snapshot,
                     evidence_hash,
+                    raw_evidence_hash,
+                    normalized_evidence_hash,
                     owner,
                     reason,
                     expires_at,
@@ -267,7 +305,7 @@ def create_suppression(payload: SuppressionCreateRequest) -> SuppressionRecord:
                     created_by,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 (
                     suppression_id,
@@ -278,6 +316,8 @@ def create_suppression(payload: SuppressionCreateRequest) -> SuppressionRecord:
                     payload.issue_title,
                     evidence_snapshot,
                     evidence_hash,
+                    raw_evidence_hash,
+                    normalized_evidence_hash,
                     payload.owner,
                     payload.reason,
                     payload.expires_at.isoformat(),
@@ -329,12 +369,51 @@ def reopen_suppression(
     return _record_from_row(updated)
 
 
-def list_decisions(*, spec_version_id: str | None = None) -> list[DecisionRecord]:
+def reconfirm_suppression(
+    suppression_id: str,
+    payload: ReviewResolutionRequest,
+) -> SuppressionRecord | None:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM suppressions WHERE id = ?",
+            (suppression_id,),
+        ).fetchone()
+        if not row:
+            return None
+        connection.execute(
+            """
+            UPDATE suppressions
+            SET status = 'active',
+                reopened_by = NULL,
+                reopened_at = NULL,
+                reopened_reason = NULL
+            WHERE id = ?
+            """,
+            (
+                suppression_id,
+            ),
+        )
+        connection.commit()
+        updated = connection.execute(
+            "SELECT * FROM suppressions WHERE id = ?",
+            (suppression_id,),
+        ).fetchone()
+    return _record_from_row(updated)
+
+
+def list_decisions(
+    *,
+    spec_version_id: str | None = None,
+    status: DecisionStatus | None = None,
+) -> list[DecisionRecord]:
     conditions: list[str] = []
     params: list[str] = []
     if spec_version_id:
         conditions.append("spec_version_id = ?")
         params.append(spec_version_id)
+    if status:
+        conditions.append("status = ?")
+        params.append(status.value)
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     with _connect() as connection:
         rows = connection.execute(
@@ -351,7 +430,8 @@ def list_decisions(*, spec_version_id: str | None = None) -> list[DecisionRecord
 
 def create_decision(payload: DecisionCreateRequest) -> DecisionRecord:
     evidence_snapshot = compact_quote(payload.evidence_snapshot, limit=240)
-    evidence_hash = payload.evidence_hash or _hash_text(evidence_snapshot)
+    raw_evidence_hash, normalized_evidence_hash = _evidence_hashes(evidence_snapshot)
+    evidence_hash = payload.evidence_hash or normalized_evidence_hash
     created_by = payload.created_by or payload.owner
     now = _now()
     with _connect() as connection:
@@ -373,8 +453,11 @@ def create_decision(payload: DecisionCreateRequest) -> DecisionRecord:
                     issue_title = ?,
                     evidence_snapshot = ?,
                     evidence_hash = ?,
+                    raw_evidence_hash = ?,
+                    normalized_evidence_hash = ?,
                     owner = ?,
                     decision_note = ?,
+                    status = 'decided',
                     created_by = ?
                 WHERE id = ?
                 """,
@@ -384,6 +467,8 @@ def create_decision(payload: DecisionCreateRequest) -> DecisionRecord:
                     payload.issue_title,
                     evidence_snapshot,
                     evidence_hash,
+                    raw_evidence_hash,
+                    normalized_evidence_hash,
                     payload.owner,
                     payload.decision_note,
                     created_by,
@@ -404,13 +489,15 @@ def create_decision(payload: DecisionCreateRequest) -> DecisionRecord:
                     issue_title,
                     evidence_snapshot,
                     evidence_hash,
+                    raw_evidence_hash,
+                    normalized_evidence_hash,
                     owner,
                     decision_note,
                     status,
                     created_by,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'decided', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'decided', ?, ?)
                 """,
                 (
                     decision_id,
@@ -421,6 +508,8 @@ def create_decision(payload: DecisionCreateRequest) -> DecisionRecord:
                     payload.issue_title,
                     evidence_snapshot,
                     evidence_hash,
+                    raw_evidence_hash,
+                    normalized_evidence_hash,
                     payload.owner,
                     payload.decision_note,
                     created_by,
@@ -433,6 +522,74 @@ def create_decision(payload: DecisionCreateRequest) -> DecisionRecord:
             (decision_id,),
         ).fetchone()
     return _decision_from_row(row)
+
+
+def reconfirm_decision(
+    decision_id: str,
+    payload: ReviewResolutionRequest,
+) -> DecisionRecord | None:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM decisions WHERE id = ?",
+            (decision_id,),
+        ).fetchone()
+        if not row:
+            return None
+        connection.execute(
+            """
+            UPDATE decisions
+            SET status = 'decided',
+                reopened_by = NULL,
+                reopened_at = NULL,
+                reopened_reason = NULL
+            WHERE id = ?
+            """,
+            (
+                decision_id,
+            ),
+        )
+        connection.commit()
+        updated = connection.execute(
+            "SELECT * FROM decisions WHERE id = ?",
+            (decision_id,),
+        ).fetchone()
+    return _decision_from_row(updated)
+
+
+def reopen_decision(
+    decision_id: str,
+    payload: SuppressionReopenRequest,
+) -> DecisionRecord | None:
+    now = _now()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM decisions WHERE id = ?",
+            (decision_id,),
+        ).fetchone()
+        if not row:
+            return None
+        connection.execute(
+            """
+            UPDATE decisions
+            SET status = 'reopened',
+                reopened_by = ?,
+                reopened_at = ?,
+                reopened_reason = ?
+            WHERE id = ?
+            """,
+            (
+                payload.reopened_by,
+                now,
+                payload.reopened_reason,
+                decision_id,
+            ),
+        )
+        connection.commit()
+        updated = connection.execute(
+            "SELECT * FROM decisions WHERE id = ?",
+            (decision_id,),
+        ).fetchone()
+    return _decision_from_row(updated)
 
 
 def decisions_markdown(*, spec_version_id: str | None = None) -> str:
@@ -452,6 +609,7 @@ def decisions_markdown(*, spec_version_id: str | None = None) -> str:
                 f"- Issue: `{decision.issue_id}`",
                 f"- Type: {decision.issue_type.value}",
                 f"- Severity: {decision.severity.value}",
+                f"- Status: {decision.status.value}",
                 f"- Owner: {decision.owner}",
                 f"- Created by: {decision.created_by}",
                 f"- Created at: {decision.created_at.isoformat()}",
@@ -469,10 +627,262 @@ def decisions_markdown(*, spec_version_id: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def _sync_review_artifacts(
+    connection: sqlite3.Connection,
+    report: SpecAnalysisResponse,
+    spec_version_id: str,
+    now: str,
+) -> None:
+    for issue in report.issues:
+        _carry_forward_suppression(connection, issue, spec_version_id, report.title, now)
+        _carry_forward_decision(connection, issue, spec_version_id, report.title, now)
+
+
+def _carry_forward_suppression(
+    connection: sqlite3.Connection,
+    issue: object,
+    spec_version_id: str,
+    spec_title: str,
+    now: str,
+) -> None:
+    if _current_artifact_exists(connection, "suppressions", issue, spec_version_id):
+        return
+    prior = _prior_suppression(connection, issue, spec_version_id, spec_title)
+    if not prior:
+        return
+
+    evidence_snapshot, raw_hash, normalized_hash = _current_evidence_values(issue)
+    status = _review_status(
+        prior,
+        normalized_hash,
+        default_status=SuppressionStatus.active.value,
+    )
+    connection.execute(
+        """
+        INSERT INTO suppressions (
+            id,
+            spec_version_id,
+            issue_id,
+            issue_type,
+            severity,
+            issue_title,
+            evidence_snapshot,
+            evidence_hash,
+            raw_evidence_hash,
+            normalized_evidence_hash,
+            owner,
+            reason,
+            expires_at,
+            status,
+            created_by,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"sup_{uuid4().hex[:12]}",
+            spec_version_id,
+            issue.id,
+            issue.type.value,
+            issue.severity.value,
+            issue.title,
+            evidence_snapshot,
+            normalized_hash,
+            raw_hash,
+            normalized_hash,
+            prior["owner"],
+            prior["reason"],
+            prior["expires_at"],
+            status,
+            prior["created_by"],
+            now,
+        ),
+    )
+
+
+def _carry_forward_decision(
+    connection: sqlite3.Connection,
+    issue: object,
+    spec_version_id: str,
+    spec_title: str,
+    now: str,
+) -> None:
+    if _current_artifact_exists(connection, "decisions", issue, spec_version_id):
+        return
+    prior = _prior_decision(connection, issue, spec_version_id, spec_title)
+    if not prior:
+        return
+
+    evidence_snapshot, raw_hash, normalized_hash = _current_evidence_values(issue)
+    status = _review_status(
+        prior,
+        normalized_hash,
+        default_status=DecisionStatus.decided.value,
+    )
+    connection.execute(
+        """
+        INSERT INTO decisions (
+            id,
+            spec_version_id,
+            issue_id,
+            issue_type,
+            severity,
+            issue_title,
+            evidence_snapshot,
+            evidence_hash,
+            raw_evidence_hash,
+            normalized_evidence_hash,
+            owner,
+            decision_note,
+            status,
+            created_by,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"dec_{uuid4().hex[:12]}",
+            spec_version_id,
+            issue.id,
+            issue.type.value,
+            issue.severity.value,
+            issue.title,
+            evidence_snapshot,
+            normalized_hash,
+            raw_hash,
+            normalized_hash,
+            prior["owner"],
+            prior["decision_note"],
+            status,
+            prior["created_by"],
+            now,
+        ),
+    )
+
+
+def _current_artifact_exists(
+    connection: sqlite3.Connection,
+    table: str,
+    issue: object,
+    spec_version_id: str,
+) -> bool:
+    row = connection.execute(
+        f"""
+        SELECT id
+        FROM {table}
+        WHERE spec_version_id = ?
+          AND status != 'reopened'
+          AND (
+            issue_id = ?
+            OR (issue_type = ? AND issue_title = ?)
+          )
+        LIMIT 1
+        """,
+        (
+            spec_version_id,
+            issue.id,
+            issue.type.value,
+            issue.title,
+        ),
+    ).fetchone()
+    return row is not None
+
+
+def _prior_suppression(
+    connection: sqlite3.Connection,
+    issue: object,
+    spec_version_id: str,
+    spec_title: str,
+) -> sqlite3.Row | None:
+    today = date.today().isoformat()
+    return connection.execute(
+        """
+        SELECT suppressions.*
+        FROM suppressions
+        JOIN spec_versions ON spec_versions.id = suppressions.spec_version_id
+        WHERE spec_version_id != ?
+          AND spec_versions.title = ?
+          AND (
+            issue_id = ?
+            OR (issue_type = ? AND issue_title = ?)
+          )
+          AND (
+            status = 'pending_review'
+            OR (status = 'active' AND expires_at >= ?)
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (
+            spec_version_id,
+            spec_title,
+            issue.id,
+            issue.type.value,
+            issue.title,
+            today,
+        ),
+    ).fetchone()
+
+
+def _prior_decision(
+    connection: sqlite3.Connection,
+    issue: object,
+    spec_version_id: str,
+    spec_title: str,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        """
+        SELECT decisions.*
+        FROM decisions
+        JOIN spec_versions ON spec_versions.id = decisions.spec_version_id
+        WHERE spec_version_id != ?
+          AND spec_versions.title = ?
+          AND (
+            issue_id = ?
+            OR (issue_type = ? AND issue_title = ?)
+          )
+          AND status IN ('decided', 'pending_review')
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (
+            spec_version_id,
+            spec_title,
+            issue.id,
+            issue.type.value,
+            issue.title,
+        ),
+    ).fetchone()
+
+
+def _current_evidence_values(issue: object) -> tuple[str, str, str]:
+    evidence_snapshot = compact_quote(issue.evidence, limit=240)
+    raw_hash, normalized_hash = _evidence_hashes(evidence_snapshot)
+    return evidence_snapshot, raw_hash, normalized_hash
+
+
+def _review_status(
+    prior: sqlite3.Row,
+    normalized_hash: str,
+    *,
+    default_status: str,
+) -> str:
+    prior_hash = prior["normalized_evidence_hash"] or _hash_text(
+        _normalize_evidence(prior["evidence_snapshot"])
+    )
+    if prior["status"] == "pending_review" or prior_hash != normalized_hash:
+        return "pending_review"
+    return default_status
+
+
 def _record_from_row(row: sqlite3.Row) -> SuppressionRecord:
     status = row["status"]
     if status == SuppressionStatus.active.value and row["expires_at"] < date.today().isoformat():
         status = SuppressionStatus.expired.value
+    raw_evidence_hash = row["raw_evidence_hash"] or _hash_text(row["evidence_snapshot"])
+    normalized_evidence_hash = row["normalized_evidence_hash"] or _hash_text(
+        _normalize_evidence(row["evidence_snapshot"])
+    )
     return SuppressionRecord(
         id=row["id"],
         spec_version_id=row["spec_version_id"],
@@ -482,6 +892,8 @@ def _record_from_row(row: sqlite3.Row) -> SuppressionRecord:
         issue_title=row["issue_title"],
         evidence_snapshot=row["evidence_snapshot"],
         evidence_hash=row["evidence_hash"],
+        raw_evidence_hash=raw_evidence_hash,
+        normalized_evidence_hash=normalized_evidence_hash,
         owner=row["owner"],
         reason=row["reason"],
         expires_at=row["expires_at"],
@@ -495,6 +907,10 @@ def _record_from_row(row: sqlite3.Row) -> SuppressionRecord:
 
 
 def _decision_from_row(row: sqlite3.Row) -> DecisionRecord:
+    raw_evidence_hash = row["raw_evidence_hash"] or _hash_text(row["evidence_snapshot"])
+    normalized_evidence_hash = row["normalized_evidence_hash"] or _hash_text(
+        _normalize_evidence(row["evidence_snapshot"])
+    )
     return DecisionRecord(
         id=row["id"],
         spec_version_id=row["spec_version_id"],
@@ -504,12 +920,27 @@ def _decision_from_row(row: sqlite3.Row) -> DecisionRecord:
         issue_title=row["issue_title"],
         evidence_snapshot=row["evidence_snapshot"],
         evidence_hash=row["evidence_hash"],
+        raw_evidence_hash=raw_evidence_hash,
+        normalized_evidence_hash=normalized_evidence_hash,
         owner=row["owner"],
         decision_note=row["decision_note"],
         status=row["status"] or DecisionStatus.decided.value,
         created_by=row["created_by"],
         created_at=row["created_at"],
+        reopened_by=row["reopened_by"],
+        reopened_at=row["reopened_at"],
+        reopened_reason=row["reopened_reason"],
     )
+
+
+def _evidence_hashes(value: str) -> tuple[str, str]:
+    return _hash_text(value), _hash_text(_normalize_evidence(value))
+
+
+def _normalize_evidence(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", value.strip().lower())
+    normalized = re.sub(r"[^\w\s]", "", normalized)
+    return normalized
 
 
 def _hash_text(value: str) -> str:

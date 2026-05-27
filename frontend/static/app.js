@@ -209,14 +209,30 @@ function activeSuppression(issueId) {
   return suppression.expiresAt >= todayIso() ? suppression : null;
 }
 
+function pendingSuppression(issueId) {
+  const suppression = state.suppressions[issueId];
+  return suppression?.status === "pending_review" ? suppression : null;
+}
+
 function activeDecision(issueId) {
   const decision = state.decisions[issueId];
   if (!decision) return null;
   return !decision.status || decision.status === "decided" ? decision : null;
 }
 
+function pendingDecision(issueId) {
+  const decision = state.decisions[issueId];
+  return decision?.status === "pending_review" ? decision : null;
+}
+
 function openIssues(issues = []) {
-  return issues.filter((issue) => !activeSuppression(issue.id) && !activeDecision(issue.id));
+  return issues.filter(
+    (issue) =>
+      !activeSuppression(issue.id) &&
+      !activeDecision(issue.id) &&
+      !pendingSuppression(issue.id) &&
+      !pendingDecision(issue.id),
+  );
 }
 
 function acceptedRiskRecords(issues = []) {
@@ -229,6 +245,18 @@ function decisionRecords(issues = []) {
   return issues
     .map((issue) => ({ issue, decision: activeDecision(issue.id) }))
     .filter((record) => record.decision);
+}
+
+function pendingReviewRecords(issues = []) {
+  return issues
+    .flatMap((issue) => {
+      const records = [];
+      const suppression = pendingSuppression(issue.id);
+      const decision = pendingDecision(issue.id);
+      if (suppression) records.push({ issue, kind: "suppression", record: suppression });
+      if (decision) records.push({ issue, kind: "decision", record: decision });
+      return records;
+    });
 }
 
 function severityCountsForIssues(issues = []) {
@@ -269,6 +297,8 @@ function normalizeSuppression(record) {
     severity: record.severity || "",
     evidenceSnapshot: record.evidence_snapshot || record.evidenceSnapshot || "",
     evidenceHash: record.evidence_hash || record.evidenceHash || "",
+    rawEvidenceHash: record.raw_evidence_hash || record.rawEvidenceHash || "",
+    normalizedEvidenceHash: record.normalized_evidence_hash || record.normalizedEvidenceHash || "",
     acceptedAt: record.created_at || record.acceptedAt || "",
     status: record.status || "active",
   };
@@ -293,6 +323,8 @@ function normalizeDecision(record) {
     severity: record.severity || "",
     evidenceSnapshot: record.evidence_snapshot || record.evidenceSnapshot || "",
     evidenceHash: record.evidence_hash || record.evidenceHash || "",
+    rawEvidenceHash: record.raw_evidence_hash || record.rawEvidenceHash || "",
+    normalizedEvidenceHash: record.normalized_evidence_hash || record.normalizedEvidenceHash || "",
     createdAt: record.created_at || record.createdAt || "",
     status: record.status || "decided",
   };
@@ -307,9 +339,7 @@ function applyDecisionRecord(record) {
 async function hydrateSuppressions(report) {
   if (!report?.spec_version_id) return;
   try {
-    const records = await api(
-      `/api/suppressions?spec_version_id=${encodeURIComponent(report.spec_version_id)}&status=active`,
-    );
+    const records = await api(`/api/suppressions?spec_version_id=${encodeURIComponent(report.spec_version_id)}`);
     records.forEach(applySuppressionRecord);
     storeSuppressions();
   } catch {
@@ -571,9 +601,10 @@ function renderIssues(issues) {
   const visibleIssues = openIssues(issues);
   const acceptedRisks = acceptedRiskRecords(issues);
   const decisions = decisionRecords(issues);
+  const pendingReviews = pendingReviewRecords(issues);
   const acceptedCount = acceptedRisks.length;
   renderIssueFilterState();
-  els.issueCount.textContent = `${visibleIssues.length} open${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
+  els.issueCount.textContent = `${visibleIssues.length} open${pendingReviews.length ? ` + ${pendingReviews.length} review` : ""}${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
   if (!issues.length) {
     els.issuesList.className = "issue-list empty-state";
     els.issuesList.textContent = "No lint issues found.";
@@ -583,6 +614,9 @@ function renderIssues(issues) {
   const sections = [];
   if (state.issueFilter === "action" || state.issueFilter === "all") {
     sections.push(visibleIssues.map((issue) => issueMarkupFor(issue)).join(""));
+  }
+  if (state.issueFilter === "review" || state.issueFilter === "all") {
+    sections.push(pendingReviewMarkup(pendingReviews));
   }
   if (state.issueFilter === "all") {
     sections.push(decisionMarkup(decisions));
@@ -692,8 +726,53 @@ function renderIssueFilterState() {
 
 function emptyIssueFilterCopy() {
   if (state.issueFilter === "accepted") return "No accepted risks for this run.";
+  if (state.issueFilter === "review") return "No pending reviews for this run.";
   if (state.issueFilter === "all") return "No diagnostics in this view.";
-  return "No action-required issues. Decisions and accepted risks are still available in All.";
+  return "No action-required issues. Decisions, pending reviews, and accepted risks are still available in All.";
+}
+
+function pendingReviewMarkup(records) {
+  if (!records.length) return "";
+  return `
+    <section class="pending-review-group" aria-label="Pending reviews">
+      <div class="accepted-risk-header">
+        <div>
+          <strong>Needs review</strong>
+          <p>The warning text changed, so the prior decision needs a quick human check.</p>
+        </div>
+        <span class="count-pill">${records.length}</span>
+      </div>
+      ${records
+        .map(
+          ({ issue, kind, record }) => `
+            <article class="issue-item pending-review">
+              <div class="issue-topline">
+                <div class="tag-row">
+                  <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
+                  <span class="tag">${humanize(issue.type)}</span>
+                  <span class="tag">Needs review</span>
+                  <span class="tag">${kind === "decision" ? "Decision" : "Accepted risk"}</span>
+                </div>
+                <div class="issue-actions">
+                  <button class="ghost-button compact reconfirm-review" type="button" data-review-kind="${escapeHtml(kind)}" data-issue-id="${escapeHtml(issue.id)}">Reconfirm</button>
+                  <button class="ghost-button compact reopen-review" type="button" data-review-kind="${escapeHtml(kind)}" data-issue-id="${escapeHtml(issue.id)}">Reopen</button>
+                </div>
+              </div>
+              <h3>${escapeHtml(issue.title)}</h3>
+              <div class="issue-grid">
+                <span class="issue-label">Owner</span>
+                <p>${escapeHtml(record.owner)}</p>
+                <span class="issue-label">Previous call</span>
+                <p>${escapeHtml(kind === "decision" ? record.decisionNote : record.reason)}</p>
+                <span class="issue-label">Current evidence</span>
+                <p>${escapeHtml(record.evidenceSnapshot || issue.evidence)}</p>
+              </div>
+            </article>
+          `,
+        )
+        .join("")}
+    </section>
+  `;
 }
 
 function acceptedRiskMarkup(records) {
@@ -1095,6 +1174,73 @@ async function restoreIssue(issueId) {
   toast("Warning reopened.");
 }
 
+async function reconfirmReview(kind, issueId) {
+  const record = kind === "decision" ? state.decisions[issueId] : state.suppressions[issueId];
+  if (!record) return;
+  if (kind === "decision") {
+    if (record.decisionId) {
+      const remoteRecord = await api(`/api/decisions/${encodeURIComponent(record.decisionId)}/reconfirm`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          reviewed_by: record.owner || "Unknown",
+          review_note: "Reconfirmed from the SpecLint report.",
+        }),
+      });
+      applyDecisionRecord(remoteRecord);
+    } else {
+      state.decisions[issueId] = { ...record, status: "decided" };
+    }
+    storeDecisions();
+  } else {
+    if (record.suppressionId) {
+      const remoteRecord = await api(`/api/suppressions/${encodeURIComponent(record.suppressionId)}/reconfirm`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          reviewed_by: record.owner || "Unknown",
+          review_note: "Reconfirmed from the SpecLint report.",
+        }),
+      });
+      applySuppressionRecord(remoteRecord);
+    } else {
+      state.suppressions[issueId] = { ...record, status: "active" };
+    }
+    storeSuppressions();
+  }
+  renderReport();
+  toast("Review reconfirmed.");
+}
+
+async function reopenReview(kind, issueId) {
+  if (kind === "decision") {
+    await reopenDecision(issueId);
+    return;
+  }
+  await restoreIssue(issueId);
+}
+
+async function reopenDecision(issueId) {
+  const decision = state.decisions[issueId];
+  if (!decision) return;
+  if (decision.decisionId) {
+    try {
+      await api(`/api/decisions/${encodeURIComponent(decision.decisionId)}/reopen`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          reopened_by: decision.owner || "Unknown",
+          reopened_reason: "Reopened from the SpecLint report.",
+        }),
+      });
+    } catch (error) {
+      toast(error.message || "Could not reopen this decision.");
+      return;
+    }
+  }
+  delete state.decisions[issueId];
+  storeDecisions();
+  renderReport();
+  toast("Decision reopened.");
+}
+
 function useRewrite({ rerun = false } = {}) {
   if (!state.report?.rewritten_spec) {
     toast("Run analysis first.");
@@ -1126,10 +1272,16 @@ function reportMarkdown() {
         `- [${issue.severity}] ${issue.title}: decided by ${decision.owner}. Decision: ${decision.decisionNote}`,
     )
     .join("\n");
+  const pendingReviews = pendingReviewRecords(report.issues)
+    .map(
+      ({ issue, kind, record }) =>
+        `- [${issue.severity}] ${issue.title}: ${kind === "decision" ? "decision" : "accepted risk"} needs review by ${record.owner}.`,
+    )
+    .join("\n");
   const tests = report.acceptance_tests
     .map((test) => `- ${test.name}: Given ${test.given}, when ${test.when}, then ${test.then}.`)
     .join("\n");
-  return `# ${report.title}\n\nScore: ${report.score}/100 - ${verdictLabel(report.verdict)}\n\n${report.summary}\n\n## Open Issues\n${issues || "None"}\n\n## Requirements Decisions\n${decisions || "None"}\n\n## Accepted Risks\n${acceptedRisks || "None"}\n\n## Acceptance Tests\n${tests || "None"}\n\n## Rewritten Spec\n${report.rewritten_spec}\n`;
+  return `# ${report.title}\n\nScore: ${report.score}/100 - ${verdictLabel(report.verdict)}\n\n${report.summary}\n\n## Open Issues\n${issues || "None"}\n\n## Pending Reviews\n${pendingReviews || "None"}\n\n## Requirements Decisions\n${decisions || "None"}\n\n## Accepted Risks\n${acceptedRisks || "None"}\n\n## Acceptance Tests\n${tests || "None"}\n\n## Rewritten Spec\n${report.rewritten_spec}\n`;
 }
 
 function downloadMarkdown() {
@@ -1234,6 +1386,20 @@ els.issuesList.addEventListener("click", (event) => {
   const restoreButton = event.target.closest(".restore-issue");
   if (restoreButton) {
     restoreIssue(restoreButton.dataset.issueId).catch((error) => toast(error.message));
+    return;
+  }
+  const reconfirmButton = event.target.closest(".reconfirm-review");
+  if (reconfirmButton) {
+    reconfirmReview(reconfirmButton.dataset.reviewKind, reconfirmButton.dataset.issueId).catch((error) =>
+      toast(error.message),
+    );
+    return;
+  }
+  const reopenReviewButton = event.target.closest(".reopen-review");
+  if (reopenReviewButton) {
+    reopenReview(reopenReviewButton.dataset.reviewKind, reopenReviewButton.dataset.issueId).catch((error) =>
+      toast(error.message),
+    );
     return;
   }
   if (event.target.closest(".cancel-suppression")) {

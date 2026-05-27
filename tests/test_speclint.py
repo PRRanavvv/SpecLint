@@ -160,6 +160,123 @@ class SpecLintTests(unittest.TestCase):
         self.assertIn("Receiving owner must accept", exported.text)
         self.assertIn("SpecLint Requirements Decisions", exported.text)
 
+    def test_evidence_hash_review_carries_decisions_across_spec_versions(self):
+        client = TestClient(app)
+        title = "Reviewable workspace removal"
+        base_spec = (
+            "Admins can remove members from a workspace. "
+            "Removed members lose access immediately and the team is notified. "
+            "The process should be simple."
+        )
+        punctuation_only_spec = (
+            "Admins can remove members from a workspace. "
+            "Removed members lose access immediately and the team is notified. "
+            "The process should be simple!"
+        )
+        changed_spec = (
+            "Admins can remove members from a workspace. "
+            "Removed members lose access immediately and the team is notified. "
+            "The process should be simple and quick."
+        )
+
+        analysis = client.post(
+            "/api/analyze",
+            json={"title": title, "spec_text": base_spec, "strictness": "ruthless"},
+        )
+        self.assertEqual(analysis.status_code, 200)
+        base_report = analysis.json()
+        issue = next(item for item in base_report["issues"] if item["type"] == "unverifiable_claim")
+        expires_at = (date.today() + timedelta(days=30)).isoformat()
+
+        suppression = client.post(
+            "/api/suppressions",
+            json={
+                "spec_version_id": base_report["spec_version_id"],
+                "issue_id": issue["id"],
+                "issue_type": issue["type"],
+                "severity": issue["severity"],
+                "issue_title": issue["title"],
+                "evidence_snapshot": issue["evidence"],
+                "owner": "Product Owner",
+                "reason": "The first release accepts a broad usability target.",
+                "expires_at": expires_at,
+                "created_by": "Product Owner",
+            },
+        )
+        decision = client.post(
+            "/api/decisions",
+            json={
+                "spec_version_id": base_report["spec_version_id"],
+                "issue_id": issue["id"],
+                "issue_type": issue["type"],
+                "severity": issue["severity"],
+                "issue_title": issue["title"],
+                "evidence_snapshot": issue["evidence"],
+                "owner": "Product Owner",
+                "decision_note": "Usability target will be defined after beta feedback.",
+                "created_by": "Product Owner",
+            },
+        )
+        self.assertEqual(suppression.status_code, 200)
+        self.assertEqual(decision.status_code, 200)
+
+        punctuation_analysis = client.post(
+            "/api/analyze",
+            json={"title": title, "spec_text": punctuation_only_spec, "strictness": "ruthless"},
+        )
+        self.assertEqual(punctuation_analysis.status_code, 200)
+        punctuation_report = punctuation_analysis.json()
+        active_suppressions = client.get(
+            "/api/suppressions",
+            params={"spec_version_id": punctuation_report["spec_version_id"], "status": "active"},
+        ).json()
+        carried_decisions = client.get(
+            "/api/decisions",
+            params={"spec_version_id": punctuation_report["spec_version_id"]},
+        ).json()
+
+        self.assertEqual(len(active_suppressions), 1)
+        self.assertEqual(active_suppressions[0]["status"], "active")
+        self.assertEqual(len(carried_decisions), 1)
+        self.assertEqual(carried_decisions[0]["status"], "decided")
+
+        changed_analysis = client.post(
+            "/api/analyze",
+            json={"title": title, "spec_text": changed_spec, "strictness": "ruthless"},
+        )
+        self.assertEqual(changed_analysis.status_code, 200)
+        changed_report = changed_analysis.json()
+        pending_suppressions = client.get(
+            "/api/suppressions",
+            params={"spec_version_id": changed_report["spec_version_id"], "status": "pending_review"},
+        ).json()
+        pending_decisions = client.get(
+            "/api/decisions",
+            params={"spec_version_id": changed_report["spec_version_id"], "status": "pending_review"},
+        ).json()
+
+        self.assertEqual(len(pending_suppressions), 1)
+        self.assertEqual(pending_suppressions[0]["status"], "pending_review")
+        self.assertEqual(len(pending_decisions), 1)
+        self.assertEqual(pending_decisions[0]["status"], "pending_review")
+
+        reconfirmed = client.patch(
+            f"/api/suppressions/{pending_suppressions[0]['id']}/reconfirm",
+            json={"reviewed_by": "Product Owner", "review_note": "The broader target is still accepted."},
+        )
+        reopened = client.patch(
+            f"/api/decisions/{pending_decisions[0]['id']}/reopen",
+            json={
+                "reopened_by": "Product Owner",
+                "reopened_reason": "The wording changed enough to require a new product call.",
+            },
+        )
+
+        self.assertEqual(reconfirmed.status_code, 200)
+        self.assertEqual(reconfirmed.json()["status"], "active")
+        self.assertEqual(reopened.status_code, 200)
+        self.assertEqual(reopened.json()["status"], "reopened")
+
     def test_public_share_links_flag_lifecycle_and_do_not_treat_signing_in_as_action(self):
         report = analyze_spec(
             title="Public share links",

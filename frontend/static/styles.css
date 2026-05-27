@@ -53,6 +53,8 @@
   --accepted-risk-border: #6d8196;
   --decided-bg: #edf0dc;
   --decided-border: #cbcbcb;
+  --pending-review-bg: #f7f4df;
+  --pending-review-border: #8a6a35;
   --toast-bg: #4a4a4a;
   --shadow: 0 10px 24px rgba(74, 74, 74, 0.08);
 }
@@ -105,6 +107,8 @@
   --accepted-risk-border: #6d8196;
   --decided-bg: #3f4548;
   --decided-border: #6d8196;
+  --pending-review-bg: #4a4537;
+  --pending-review-border: #c5a56e;
   --toast-bg: #111111;
   --shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
 }
@@ -820,7 +824,8 @@ label span {
 }
 
 .accepted-risk-group,
-.decision-group {
+.decision-group,
+.pending-review-group {
   display: grid;
   gap: 12px;
 }
@@ -848,6 +853,11 @@ label span {
 .decided-issue {
   border-color: var(--decided-border);
   background: var(--decided-bg);
+}
+
+.pending-review {
+  border-color: var(--pending-review-border);
+  background: var(--pending-review-bg);
 }
 
 .rewrite-box {

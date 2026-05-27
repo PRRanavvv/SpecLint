@@ -11,7 +11,9 @@ from .analyzer import SpecInputError, analyze_spec
 from .models import (
     DecisionCreateRequest,
     DecisionRecord,
+    DecisionStatus,
     ExampleSpec,
+    ReviewResolutionRequest,
     SpecAnalysisRequest,
     SpecAnalysisResponse,
     SuppressionCreateRequest,
@@ -25,6 +27,9 @@ from .storage import (
     decisions_markdown,
     list_decisions,
     list_suppressions,
+    reconfirm_decision,
+    reconfirm_suppression,
+    reopen_decision,
     reopen_suppression,
     save_spec_version,
 )
@@ -148,14 +153,50 @@ def reopen(
     return record
 
 
+@app.patch("/api/suppressions/{suppression_id}/reconfirm", response_model=SuppressionRecord)
+def reconfirm_suppression_review(
+    suppression_id: str,
+    payload: ReviewResolutionRequest,
+) -> SuppressionRecord:
+    record = reconfirm_suppression(suppression_id, payload)
+    if not record:
+        raise HTTPException(status_code=404, detail="Suppression not found.")
+    return record
+
+
 @app.get("/api/decisions", response_model=list[DecisionRecord])
-def decisions(spec_version_id: str | None = None) -> list[DecisionRecord]:
-    return list_decisions(spec_version_id=spec_version_id)
+def decisions(
+    spec_version_id: str | None = None,
+    status: DecisionStatus | None = None,
+) -> list[DecisionRecord]:
+    return list_decisions(spec_version_id=spec_version_id, status=status)
 
 
 @app.post("/api/decisions", response_model=DecisionRecord)
 def decide(payload: DecisionCreateRequest) -> DecisionRecord:
     return create_decision(payload)
+
+
+@app.patch("/api/decisions/{decision_id}/reconfirm", response_model=DecisionRecord)
+def reconfirm_decision_review(
+    decision_id: str,
+    payload: ReviewResolutionRequest,
+) -> DecisionRecord:
+    record = reconfirm_decision(decision_id, payload)
+    if not record:
+        raise HTTPException(status_code=404, detail="Decision not found.")
+    return record
+
+
+@app.patch("/api/decisions/{decision_id}/reopen", response_model=DecisionRecord)
+def reopen_decision_review(
+    decision_id: str,
+    payload: SuppressionReopenRequest,
+) -> DecisionRecord:
+    record = reopen_decision(decision_id, payload)
+    if not record:
+        raise HTTPException(status_code=404, detail="Decision not found.")
+    return record
 
 
 @app.get("/api/decisions/export", response_class=PlainTextResponse)

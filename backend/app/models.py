@@ -23,11 +23,14 @@ class Severity(str, Enum):
 class SuppressionStatus(str, Enum):
     active = "active"
     expired = "expired"
+    pending_review = "pending_review"
     reopened = "reopened"
 
 
 class DecisionStatus(str, Enum):
     decided = "decided"
+    pending_review = "pending_review"
+    reopened = "reopened"
 
 
 class IssueType(str, Enum):
@@ -161,6 +164,11 @@ class SuppressionReopenRequest(BaseModel):
     reopened_reason: str | None = Field(default=None, max_length=600)
 
 
+class ReviewResolutionRequest(BaseModel):
+    reviewed_by: str = Field(default="Unknown", max_length=120)
+    review_note: str | None = Field(default=None, max_length=600)
+
+
 class SuppressionRecord(BaseModel):
     id: str
     spec_version_id: str
@@ -170,6 +178,8 @@ class SuppressionRecord(BaseModel):
     issue_title: str
     evidence_snapshot: str
     evidence_hash: str
+    raw_evidence_hash: str
+    normalized_evidence_hash: str
     owner: str
     reason: str
     expires_at: date
@@ -203,8 +213,13 @@ class DecisionRecord(BaseModel):
     issue_title: str
     evidence_snapshot: str
     evidence_hash: str
+    raw_evidence_hash: str
+    normalized_evidence_hash: str
     owner: str
     decision_note: str
     status: DecisionStatus
     created_by: str
     created_at: datetime
+    reopened_by: str | None = None
+    reopened_at: datetime | None = None
+    reopened_reason: str | None = None

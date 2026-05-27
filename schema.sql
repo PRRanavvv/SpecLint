@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS suppressions (
     issue_title TEXT NOT NULL,
     evidence_snapshot TEXT NOT NULL,
     evidence_hash TEXT NOT NULL,
+    raw_evidence_hash TEXT,
+    normalized_evidence_hash TEXT,
     owner TEXT NOT NULL,
     reason TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -54,11 +56,16 @@ CREATE TABLE IF NOT EXISTS decisions (
     issue_title TEXT NOT NULL,
     evidence_snapshot TEXT NOT NULL,
     evidence_hash TEXT NOT NULL,
+    raw_evidence_hash TEXT,
+    normalized_evidence_hash TEXT,
     owner TEXT NOT NULL,
     decision_note TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'decided',
     created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    reopened_by TEXT,
+    reopened_at TEXT,
+    reopened_reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS decisions_spec_version_idx

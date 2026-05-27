@@ -162,14 +162,19 @@ GET  /api/examples
 POST /api/analyze
 GET  /api/suppressions
 POST /api/suppressions
+PATCH /api/suppressions/{id}/reconfirm
 PATCH /api/suppressions/{id}/reopen
 GET  /api/decisions
 POST /api/decisions
+PATCH /api/decisions/{id}/reconfirm
+PATCH /api/decisions/{id}/reopen
 GET  /api/decisions/export
 ```
 
-Most users do not need to call these directly. The website uses them in the background to analyze specs, keep the accepted-risk log in sync, and save requirement decisions.
+Most users do not need to call these directly. The website uses them in the background to analyze specs, keep the accepted-risk log in sync, save requirement decisions, and mark older decisions as needing review when the spec text changes in a meaningful way.
 
 ## Current Status
 
 SpecLint is an MVP, which means it is a working first version. It already gives useful feedback without needing any paid API. A future version could add an AI review step, but the current version is meant to stay simple, fast, and explainable.
+
+The decision log now keeps accepted risks and product decisions attached to spec versions. If only punctuation or casing changes, SpecLint keeps the decision active. If the actual evidence text changes, it marks that decision as `pending_review` so the owner can reconfirm it or reopen the warning.
