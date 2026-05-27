@@ -59,16 +59,12 @@
             <h1>Compile vague specs before they become bugs.</h1>
           </div>
           <div class="top-actions">
-            <div class="theme-switch" role="group" aria-label="Theme">
-              <button id="lightThemeButton" class="theme-option" type="button" data-theme-choice="light" aria-pressed="false" title="Use light theme">
-                <span class="theme-icon theme-icon-light" aria-hidden="true"></span>
-                <span>Light</span>
-              </button>
-              <button id="darkThemeButton" class="theme-option" type="button" data-theme-choice="dark" aria-pressed="false" title="Use dark theme">
-                <span class="theme-icon theme-icon-dark" aria-hidden="true"></span>
-                <span>Dark</span>
-              </button>
-            </div>
+            <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" title="Switch to night mode">
+              <span id="themeToggleLabel" class="theme-toggle-label">Day mode</span>
+              <span class="theme-toggle-orb" aria-hidden="true">
+                <span class="theme-toggle-icon"></span>
+              </span>
+            </button>
             <select id="exampleSelect" aria-label="Load example">
               <option value="">Examples</option>
             </select>

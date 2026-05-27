@@ -1,7 +1,11 @@
+const SUPPRESSIONS_STORAGE_KEY = "speclint-suppressions";
+
 const state = {
   report: null,
   examples: [],
   history: [],
+  suppressions: loadSuppressions(),
+  suppressingIssueId: null,
   rewriteView: "formatted",
   sourceSpecText: null,
   preserveSourceForNextRun: false,
@@ -99,7 +103,8 @@ const els = {
   copyRewriteButton: document.querySelector("#copyRewriteButton"),
   shareButton: document.querySelector("#shareButton"),
   downloadButton: document.querySelector("#downloadButton"),
-  themeButtons: document.querySelectorAll("[data-theme-choice]"),
+  themeToggle: document.querySelector("#themeToggle"),
+  themeToggleLabel: document.querySelector("#themeToggleLabel"),
   toast: document.querySelector("#toast"),
 };
 
@@ -132,9 +137,72 @@ function setTheme(theme, { persist = true } = {}) {
   const nextTheme = theme === "dark" ? "dark" : "light";
   document.documentElement.dataset.theme = nextTheme;
   if (persist) storeTheme(nextTheme);
-  els.themeButtons.forEach((button) => {
-    button.setAttribute("aria-pressed", String(button.dataset.themeChoice === nextTheme));
+  const isDark = nextTheme === "dark";
+  els.themeToggle?.setAttribute("aria-pressed", String(isDark));
+  els.themeToggle?.setAttribute("aria-label", isDark ? "Switch to day mode" : "Switch to night mode");
+  els.themeToggle?.setAttribute("title", isDark ? "Switch to day mode" : "Switch to night mode");
+  if (els.themeToggleLabel) {
+    els.themeToggleLabel.textContent = isDark ? "Night mode" : "Day mode";
+  }
+}
+
+function loadSuppressions() {
+  try {
+    const raw = window.localStorage.getItem(SUPPRESSIONS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeSuppressions() {
+  try {
+    window.localStorage.setItem(SUPPRESSIONS_STORAGE_KEY, JSON.stringify(state.suppressions));
+  } catch {
+    toast("Suppression saved for this session, but browser storage is blocked.");
+  }
+}
+
+function todayIso() {
+  const today = new Date();
+  today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+  return today.toISOString().slice(0, 10);
+}
+
+function formatDate(value) {
+  if (!value) return "no expiry";
+  return new Date(`${value}T00:00:00`).toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   });
+}
+
+function activeSuppression(issueId) {
+  const suppression = state.suppressions[issueId];
+  if (!suppression?.expiresAt) return null;
+  return suppression.expiresAt >= todayIso() ? suppression : null;
+}
+
+function openIssues(issues = []) {
+  return issues.filter((issue) => !activeSuppression(issue.id));
+}
+
+function acceptedRiskRecords(issues = []) {
+  return issues
+    .map((issue) => ({ issue, suppression: activeSuppression(issue.id) }))
+    .filter((record) => record.suppression);
+}
+
+function severityCountsForIssues(issues = []) {
+  return issues.reduce(
+    (counts, issue) => {
+      counts[issue.severity] = (counts[issue.severity] || 0) + 1;
+      return counts;
+    },
+    { critical: 0, high: 0, medium: 0, low: 0 },
+  );
 }
 
 async function api(path, options = {}) {
@@ -282,7 +350,7 @@ function addHistory(report, specText) {
     title: report.title,
     score: report.score,
     verdict: report.verdict,
-    issueCount: report.issues.length,
+    issueCount: openIssues(report.issues).length,
     delta: previous ? report.score - previous.score : 0,
     specText,
     at: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -293,12 +361,13 @@ function addHistory(report, specText) {
 function renderReport() {
   const report = state.report;
   if (!report) return;
+  const visibleIssues = openIssues(report.issues);
   els.scoreValue.textContent = report.score;
   els.scoreLabel.textContent = `${verdictLabel(report.verdict)} out of 100`;
   els.verdictText.textContent = `${report.score} / 100 - ${verdictLabel(report.verdict)}`;
   els.summaryText.textContent = report.summary;
   els.strictnessHelp.textContent = report.strictness_note || strictnessCopy[els.strictnessSelect.value];
-  renderSeverityCounts(report.severity_counts);
+  renderSeverityCounts(severityCountsForIssues(visibleIssues));
   renderRubric(report.score_breakdown);
   renderIntent(report.intent);
   renderIssues(report.issues);
@@ -311,6 +380,7 @@ function renderReport() {
 
 function renderInputRejected() {
   state.report = null;
+  state.suppressingIssueId = null;
   els.scoreValue.textContent = "--";
   els.scoreLabel.textContent = "Improper input";
   els.verdictText.textContent = "IMPROPER INPUT";
@@ -386,23 +456,39 @@ function renderIntent(intent) {
 }
 
 function renderIssues(issues) {
-  els.issueCount.textContent = `${issues.length} issue${issues.length === 1 ? "" : "s"}`;
+  const visibleIssues = openIssues(issues);
+  const acceptedRisks = acceptedRiskRecords(issues);
+  const acceptedCount = acceptedRisks.length;
+  els.issueCount.textContent = `${visibleIssues.length} open${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
   if (!issues.length) {
     els.issuesList.className = "issue-list empty-state";
     els.issuesList.textContent = "No lint issues found.";
     return;
   }
+  if (!visibleIssues.length && acceptedRisks.length) {
+    els.issuesList.className = "issue-list";
+    els.issuesList.innerHTML = acceptedRiskMarkup(acceptedRisks);
+    return;
+  }
   els.issuesList.className = "issue-list";
-  els.issuesList.innerHTML = issues
-    .map(
-      (issue) => `
+  const issueMarkup = visibleIssues.map((issue) => issueMarkupFor(issue)).join("");
+  els.issuesList.innerHTML = `${issueMarkup}${acceptedRiskMarkup(acceptedRisks)}`;
+}
+
+function issueMarkupFor(issue) {
+  const existing = state.suppressions[issue.id] || {};
+  const isSuppressing = state.suppressingIssueId === issue.id;
+  return `
         <article class="issue-item">
           <div class="issue-topline">
             <div class="tag-row">
               <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
               <span class="tag">${humanize(issue.type)}</span>
             </div>
-            <button class="ghost-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Add fix to draft</button>
+            <div class="issue-actions">
+              <button class="ghost-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Add fix to draft</button>
+              <button class="ghost-button compact suppress-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Accept risk</button>
+            </div>
           </div>
           <h3>${escapeHtml(issue.title)}</h3>
           <div class="issue-grid">
@@ -415,10 +501,78 @@ function renderIssues(issues) {
             <span class="issue-label">Question to answer</span>
             <p>${escapeHtml(issue.test_prompt)}</p>
           </div>
+          ${
+            isSuppressing
+              ? `
+                <form class="suppression-form" data-issue-id="${escapeHtml(issue.id)}">
+                  <div>
+                    <strong>Accept this risk</strong>
+                    <p>Record why the team is choosing not to fix this warning right now.</p>
+                  </div>
+                  <div class="suppression-fields">
+                    <label>
+                      <span>Owner</span>
+                      <input name="owner" maxlength="80" value="${escapeHtml(existing.owner || "")}" placeholder="Risk owner" required />
+                    </label>
+                    <label>
+                      <span>Expires</span>
+                      <input name="expiresAt" type="date" min="${todayIso()}" value="${escapeHtml(existing.expiresAt || "")}" required />
+                    </label>
+                    <label class="suppression-reason">
+                      <span>Reason</span>
+                      <textarea name="reason" maxlength="420" rows="3" placeholder="Why is this acceptable for now?" required>${escapeHtml(existing.reason || "")}</textarea>
+                    </label>
+                  </div>
+                  <div class="button-row">
+                    <button class="primary compact" type="submit">Save suppression</button>
+                    <button class="ghost-button compact cancel-suppression" type="button">Cancel</button>
+                  </div>
+                </form>
+              `
+              : ""
+          }
         </article>
-      `,
-    )
-    .join("");
+      `;
+}
+
+function acceptedRiskMarkup(records) {
+  if (!records.length) return "";
+  return `
+    <section class="accepted-risk-group" aria-label="Accepted risks">
+      <div class="accepted-risk-header">
+        <div>
+          <strong>Accepted risks</strong>
+          <p>These warnings are documented decisions, not silent ignores.</p>
+        </div>
+        <span class="count-pill">${records.length}</span>
+      </div>
+      ${records
+        .map(
+          ({ issue, suppression }) => `
+            <article class="issue-item accepted-risk">
+              <div class="issue-topline">
+                <div class="tag-row">
+                  <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
+                  <span class="tag">${humanize(issue.type)}</span>
+                  <span class="tag">Accepted risk</span>
+                </div>
+                <button class="ghost-button compact restore-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Reopen</button>
+              </div>
+              <h3>${escapeHtml(issue.title)}</h3>
+              <div class="issue-grid">
+                <span class="issue-label">Owner</span>
+                <p>${escapeHtml(suppression.owner)}</p>
+                <span class="issue-label">Expires</span>
+                <p>${escapeHtml(formatDate(suppression.expiresAt))}</p>
+                <span class="issue-label">Reason</span>
+                <p>${escapeHtml(suppression.reason)}</p>
+              </div>
+            </article>
+          `,
+        )
+        .join("")}
+    </section>
+  `;
 }
 
 function renderCategoryGuide(categories = []) {
@@ -585,6 +739,55 @@ function applyIssueFix(issueId) {
   toast("Fix added to the draft. Re-run SpecLint to check the score.");
 }
 
+function openSuppressionForm(issueId) {
+  if (!state.report?.issues.some((issue) => issue.id === issueId)) return;
+  state.suppressingIssueId = issueId;
+  renderReport();
+}
+
+function cancelSuppressionForm() {
+  state.suppressingIssueId = null;
+  renderReport();
+}
+
+function saveSuppression(issueId, form) {
+  const formData = new FormData(form);
+  const owner = String(formData.get("owner") || "").trim();
+  const reason = String(formData.get("reason") || "").trim();
+  const expiresAt = String(formData.get("expiresAt") || "").trim();
+  if (!owner || !reason || !expiresAt) {
+    toast("Owner, reason, and expiry are required.");
+    return;
+  }
+  if (expiresAt < todayIso()) {
+    toast("Choose an expiry date that has not passed.");
+    return;
+  }
+  const issue = state.report?.issues.find((item) => item.id === issueId);
+  if (!issue) return;
+  state.suppressions[issueId] = {
+    owner,
+    reason,
+    expiresAt,
+    title: issue.title,
+    type: issue.type,
+    severity: issue.severity,
+    acceptedAt: new Date().toISOString(),
+  };
+  state.suppressingIssueId = null;
+  storeSuppressions();
+  renderReport();
+  toast("Risk accepted and documented.");
+}
+
+function restoreIssue(issueId) {
+  if (!state.suppressions[issueId]) return;
+  delete state.suppressions[issueId];
+  storeSuppressions();
+  renderReport();
+  toast("Warning reopened.");
+}
+
 function useRewrite({ rerun = false } = {}) {
   if (!state.report?.rewritten_spec) {
     toast("Run analysis first.");
@@ -601,13 +804,19 @@ function useRewrite({ rerun = false } = {}) {
 function reportMarkdown() {
   const report = state.report;
   if (!report) return "";
-  const issues = report.issues
+  const issues = openIssues(report.issues)
     .map((issue) => `- [${issue.severity}] ${issue.title}: ${issue.suggestion}`)
+    .join("\n");
+  const acceptedRisks = acceptedRiskRecords(report.issues)
+    .map(
+      ({ issue, suppression }) =>
+        `- [${issue.severity}] ${issue.title}: accepted by ${suppression.owner} until ${suppression.expiresAt}. Reason: ${suppression.reason}`,
+    )
     .join("\n");
   const tests = report.acceptance_tests
     .map((test) => `- ${test.name}: Given ${test.given}, when ${test.when}, then ${test.then}.`)
     .join("\n");
-  return `# ${report.title}\n\nScore: ${report.score}/100 - ${verdictLabel(report.verdict)}\n\n${report.summary}\n\n## Issues\n${issues || "None"}\n\n## Acceptance Tests\n${tests || "None"}\n\n## Rewritten Spec\n${report.rewritten_spec}\n`;
+  return `# ${report.title}\n\nScore: ${report.score}/100 - ${verdictLabel(report.verdict)}\n\n${report.summary}\n\n## Open Issues\n${issues || "None"}\n\n## Accepted Risks\n${acceptedRisks || "None"}\n\n## Acceptance Tests\n${tests || "None"}\n\n## Rewritten Spec\n${report.rewritten_spec}\n`;
 }
 
 function downloadMarkdown() {
@@ -672,8 +881,8 @@ els.strictnessSelect.addEventListener("change", () => {
   els.strictnessHelp.textContent = strictnessCopy[els.strictnessSelect.value];
 });
 
-els.themeButtons.forEach((button) => {
-  button.addEventListener("click", () => setTheme(button.dataset.themeChoice));
+els.themeToggle?.addEventListener("click", () => {
+  setTheme(currentTheme() === "dark" ? "light" : "dark");
 });
 
 els.exampleSelect.addEventListener("change", () => {
@@ -687,9 +896,31 @@ els.exampleSelect.addEventListener("change", () => {
 });
 
 els.issuesList.addEventListener("click", (event) => {
-  const button = event.target.closest(".apply-fix");
-  if (!button) return;
-  applyIssueFix(button.dataset.issueId);
+  const applyButton = event.target.closest(".apply-fix");
+  if (applyButton) {
+    applyIssueFix(applyButton.dataset.issueId);
+    return;
+  }
+  const suppressButton = event.target.closest(".suppress-issue");
+  if (suppressButton) {
+    openSuppressionForm(suppressButton.dataset.issueId);
+    return;
+  }
+  const restoreButton = event.target.closest(".restore-issue");
+  if (restoreButton) {
+    restoreIssue(restoreButton.dataset.issueId);
+    return;
+  }
+  if (event.target.closest(".cancel-suppression")) {
+    cancelSuppressionForm();
+  }
+});
+
+els.issuesList.addEventListener("submit", (event) => {
+  const form = event.target.closest(".suppression-form");
+  if (!form) return;
+  event.preventDefault();
+  saveSuppression(form.dataset.issueId, form);
 });
 
 els.formattedButton.addEventListener("click", () => {

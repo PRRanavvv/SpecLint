@@ -1,49 +1,112 @@
 # SpecLint
 
-SpecLint treats product requirements like code. Paste a feature spec and it emits compiler-style warnings for ambiguity, missing edge cases, unverifiable claims, permission gaps, lifecycle gaps, data constraints, failure modes, acceptance tests, and a tighter rewritten spec.
+SpecLint is a simple web app that helps people write better product requirements before development starts.
 
-The goal is not to generate code. The goal is to catch vague thinking before code exists.
+A product requirement is the note that explains what a feature should do. The problem is that many requirements sound clear at first, but they still miss important details like permissions, edge cases, error handling, or what should happen after a user takes an action.
 
-## What It Does
+SpecLint reads that requirement and gives feedback, almost like a spell checker for product specs.
 
-- Extracts actors, entities, actions, states, and explicit rules
-- Flags ambiguous or unverifiable language
-- Detects missing permission boundaries and lifecycle states
-- Generates edge cases and Given/When/Then acceptance tests
-- Produces a traceability map from requirements to tests and open questions
-- Rewrites the spec into a more build-ready version
+## What The Project Does
 
-## Run Locally
+SpecLint helps turn a rough feature idea into something easier for a developer, designer, or product manager to understand.
+
+It can:
+
+- Find unclear words like "simple", "fast", "safe", or "easy"
+- Point out missing edge cases and failure situations
+- Check if user roles and permissions are not explained well
+- Give the spec a score out of 100
+- Show issues by severity, from low to critical
+- Generate acceptance tests in a Given/When/Then format
+- Rewrite the requirement into a cleaner version
+- Keep a short run history so the user can compare improvements
+- Let users accept a warning with an owner, reason, and expiry date
+- Support both light theme and dark theme
+
+The goal is not to replace thinking. The goal is to help catch weak spots before they become bugs later.
+
+## Why I Built It
+
+When a feature is not explained clearly, the team can build the wrong thing even if the code is good. A small missing detail in the requirement can become a big problem during development.
+
+SpecLint tries to solve that by asking:
+
+- Who is allowed to do this?
+- What happens if something fails?
+- What should the system do after the action is complete?
+- Are there any security or permission problems?
+- Can this requirement actually be tested?
+
+This makes the spec more useful before anyone starts building.
+
+## How To Use It
+
+1. Enter a title for the feature.
+2. Paste or write the product requirement.
+3. Choose a strictness mode.
+4. Click Analyze.
+5. Read the score, issues, acceptance tests, and rewritten spec.
+6. Improve the requirement and run it again.
+
+There are three strictness modes:
+
+- Lenient: best for early ideas
+- Balanced: best for normal planning
+- Ruthless: best before handing the spec to engineers
+
+## Example
+
+Input:
+
+```text
+Users can invite teammates to a workspace. Guests can view projects.
+```
+
+SpecLint may point out that the requirement does not explain:
+
+- Who is allowed to invite people
+- What happens if an invite expires
+- Whether guests can edit or only view
+- What tests should prove the feature works
+
+Then it suggests a clearer version of the spec.
+
+## Run The Project Locally
+
+First, make sure Python is installed. Then run:
 
 ```powershell
 python -m uvicorn backend.app.main:app --reload --port 8000
 ```
 
-Open:
+Open this in the browser:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-## Deploy
+## Deploying The Project
 
-Netlify can serve the static frontend, but it does not run the FastAPI server.
+The project has two parts:
 
-- Connect the repo to Netlify and keep `netlify.toml` at the repo root.
-- Netlify publishes `frontend/` and rewrites `/` to `frontend/static/index.html`.
-- Deploy the FastAPI backend on Render, then set `SPECLINT_API_BASE_URL` in Netlify to the Render service origin.
+- The frontend, which is the page the user sees
+- The backend, which checks the spec and sends back the results
 
-Example Netlify value:
+Netlify can host the frontend. Render can host the backend.
+
+For Netlify:
+
+- Keep `netlify.toml` in the project root
+- Publish the `frontend/` folder
+- Set `SPECLINT_API_BASE_URL` to the Render backend URL
+
+Example:
 
 ```text
 SPECLINT_API_BASE_URL=https://speclint-api.onrender.com
 ```
 
-For Netlify Drop, uploading `frontend/` is cleanest. Uploading the whole repository also works because the root `_redirects` file points Netlify to the static app.
-
-### Render Backend
-
-Render can deploy the FastAPI backend from this same GitHub repository. The root `render.yaml` file defines a free Python Web Service with:
+For Render, use these settings:
 
 ```text
 Build command: pip install -r requirements.txt
@@ -51,18 +114,7 @@ Start command: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $POR
 Health check: /api/health
 ```
 
-If creating the service manually in Render, use:
-
-```text
-Service type: Web Service
-Runtime: Python 3
-Branch: main
-Build command: pip install -r requirements.txt
-Start command: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
-Instance type: Free
-```
-
-After the Render deployment succeeds, verify:
+After deployment, this URL should return a simple health response:
 
 ```text
 https://your-service.onrender.com/api/health
@@ -70,40 +122,44 @@ https://your-service.onrender.com/api/health
 
 Expected response:
 
-```text
+```json
 {"status":"ok","app":"SpecLint"}
 ```
 
-Then set Netlify's `SPECLINT_API_BASE_URL` environment variable to the Render origin, without a trailing slash, and redeploy Netlify.
+## Tech Used
 
-## Stack
+SpecLint uses:
 
-- FastAPI backend
-- Vanilla HTML, CSS, and JavaScript frontend
-- Deterministic Python analyzer, no API key required
-- `unittest` + FastAPI `TestClient` for tests
+- FastAPI for the backend
+- HTML, CSS, and JavaScript for the frontend
+- Python logic for analyzing requirements
+- Unit tests to check that the main features still work
 
-## API
+It does not need an API key or an online AI model for the current version. The analysis is built into the project.
 
-- `GET /api/health`
-- `GET /api/examples`
-- `POST /api/analyze`
+## Project Structure
 
-Example request:
-
-```json
-{
-  "title": "Workspace invites",
-  "spec_text": "Users can invite teammates to a workspace. Guests can view projects.",
-  "strictness": "balanced"
-}
+```text
+backend/app/        Main backend code
+frontend/static/    Web page, styles, and browser logic
+tests/              Project tests
+schema.sql          Database starter file
+netlify.toml        Netlify setup
+render.yaml         Render setup
 ```
 
-## Project Shape
+## API Routes
 
-- `backend/app/analyzer.py` contains the deterministic compiler-style analysis passes.
-- `backend/app/models.py` defines the public API schema.
-- `frontend/static/` contains the single-page interface.
-- `tests/test_speclint.py` covers the core analysis and API response.
+These are the main backend routes:
 
-SpecLint is intentionally offline-first for the MVP. A later version can add an LLM pass, but the current version already gives stable, explainable reports without API keys.
+```text
+GET  /api/health
+GET  /api/examples
+POST /api/analyze
+```
+
+Most users do not need to call these directly. The website uses them in the background.
+
+## Current Status
+
+SpecLint is an MVP, which means it is a working first version. It already gives useful feedback without needing any paid API. A future version could add an AI review step, but the current version is meant to stay simple, fast, and explainable.
