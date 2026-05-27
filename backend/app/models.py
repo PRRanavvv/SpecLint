@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Strictness(str, Enum):
@@ -17,6 +18,12 @@ class Severity(str, Enum):
     high = "high"
     medium = "medium"
     low = "low"
+
+
+class SuppressionStatus(str, Enum):
+    active = "active"
+    expired = "expired"
+    reopened = "reopened"
 
 
 class IssueType(str, Enum):
@@ -102,6 +109,7 @@ class TraceItem(BaseModel):
 
 
 class SpecAnalysisResponse(BaseModel):
+    spec_version_id: str | None = None
     title: str
     verdict: Literal["compiles", "compiles_with_warnings", "does_not_compile"]
     score: int = Field(ge=0, le=100)
@@ -121,3 +129,49 @@ class SpecAnalysisResponse(BaseModel):
 class ExampleSpec(BaseModel):
     title: str
     spec_text: str
+
+
+class SuppressionCreateRequest(BaseModel):
+    spec_version_id: str = Field(default="local", max_length=80)
+    issue_id: str = Field(max_length=80)
+    issue_type: IssueType
+    severity: Severity
+    issue_title: str = Field(max_length=180)
+    evidence_snapshot: str = Field(max_length=600)
+    evidence_hash: str | None = Field(default=None, max_length=80)
+    owner: str = Field(min_length=1, max_length=120)
+    reason: str = Field(min_length=1, max_length=600)
+    expires_at: date
+    created_by: str | None = Field(default=None, max_length=120)
+
+    @field_validator("expires_at")
+    @classmethod
+    def expiry_must_not_be_past(cls, value: date) -> date:
+        if value < date.today():
+            raise ValueError("expires_at must not be in the past")
+        return value
+
+
+class SuppressionReopenRequest(BaseModel):
+    reopened_by: str = Field(default="Unknown", max_length=120)
+    reopened_reason: str | None = Field(default=None, max_length=600)
+
+
+class SuppressionRecord(BaseModel):
+    id: str
+    spec_version_id: str
+    issue_id: str
+    issue_type: IssueType
+    severity: Severity
+    issue_title: str
+    evidence_snapshot: str
+    evidence_hash: str
+    owner: str
+    reason: str
+    expires_at: date
+    status: SuppressionStatus
+    created_by: str
+    created_at: datetime
+    reopened_by: str | None = None
+    reopened_at: datetime | None = None
+    reopened_reason: str | None = None

@@ -21,6 +21,7 @@ It can:
 - Rewrite the requirement into a cleaner version
 - Keep a short run history so the user can compare improvements
 - Let users accept a warning with an owner, reason, and expiry date
+- Store accepted risks in a backend decision log
 - Support both light theme and dark theme
 
 The goal is not to replace thinking. The goal is to help catch weak spots before they become bugs later.
@@ -133,6 +134,7 @@ SpecLint uses:
 - FastAPI for the backend
 - HTML, CSS, and JavaScript for the frontend
 - Python logic for analyzing requirements
+- SQLite for the decision log
 - Unit tests to check that the main features still work
 
 It does not need an API key or an online AI model for the current version. The analysis is built into the project.
@@ -141,6 +143,7 @@ It does not need an API key or an online AI model for the current version. The a
 
 ```text
 backend/app/        Main backend code
+backend/data/       Local database storage
 frontend/static/    Web page, styles, and browser logic
 tests/              Project tests
 schema.sql          Database starter file
@@ -156,9 +159,12 @@ These are the main backend routes:
 GET  /api/health
 GET  /api/examples
 POST /api/analyze
+GET  /api/suppressions
+POST /api/suppressions
+PATCH /api/suppressions/{id}/reopen
 ```
 
-Most users do not need to call these directly. The website uses them in the background.
+Most users do not need to call these directly. The website uses them in the background to analyze specs and keep the accepted-risk log in sync.
 
 ## Current Status
 

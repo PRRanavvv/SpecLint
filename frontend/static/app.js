@@ -182,6 +182,7 @@ function formatDate(value) {
 function activeSuppression(issueId) {
   const suppression = state.suppressions[issueId];
   if (!suppression?.expiresAt) return null;
+  if (suppression.status && suppression.status !== "active") return null;
   return suppression.expiresAt >= todayIso() ? suppression : null;
 }
 
@@ -217,6 +218,44 @@ async function api(path, options = {}) {
     throw error;
   }
   return response.json();
+}
+
+function normalizeSuppression(record) {
+  if (!record) return null;
+  return {
+    suppressionId: record.id || record.suppressionId || null,
+    specVersionId: record.spec_version_id || record.specVersionId || null,
+    issueId: record.issue_id || record.issueId || null,
+    owner: record.owner || "",
+    reason: record.reason || "",
+    expiresAt: record.expires_at || record.expiresAt || "",
+    title: record.issue_title || record.title || "",
+    type: record.issue_type || record.type || "",
+    severity: record.severity || "",
+    evidenceSnapshot: record.evidence_snapshot || record.evidenceSnapshot || "",
+    evidenceHash: record.evidence_hash || record.evidenceHash || "",
+    acceptedAt: record.created_at || record.acceptedAt || "",
+    status: record.status || "active",
+  };
+}
+
+function applySuppressionRecord(record) {
+  const normalized = normalizeSuppression(record);
+  if (!normalized?.issueId) return;
+  state.suppressions[normalized.issueId] = normalized;
+}
+
+async function hydrateSuppressions(report) {
+  if (!report?.spec_version_id) return;
+  try {
+    const records = await api(
+      `/api/suppressions?spec_version_id=${encodeURIComponent(report.spec_version_id)}&status=active`,
+    );
+    records.forEach(applySuppressionRecord);
+    storeSuppressions();
+  } catch {
+    // Local suppressions still work when the backend decision log is unavailable.
+  }
 }
 
 function escapeHtml(value) {
@@ -289,6 +328,7 @@ async function analyze({ recordHistory = true } = {}) {
       }),
     });
     state.report = report;
+    await hydrateSuppressions(report);
     if (recordHistory) addHistory(report, specText);
     renderReport();
   } catch (error) {
@@ -750,7 +790,7 @@ function cancelSuppressionForm() {
   renderReport();
 }
 
-function saveSuppression(issueId, form) {
+async function saveSuppression(issueId, form) {
   const formData = new FormData(form);
   const owner = String(formData.get("owner") || "").trim();
   const reason = String(formData.get("reason") || "").trim();
@@ -765,23 +805,66 @@ function saveSuppression(issueId, form) {
   }
   const issue = state.report?.issues.find((item) => item.id === issueId);
   if (!issue) return;
-  state.suppressions[issueId] = {
+  const localRecord = {
     owner,
     reason,
     expiresAt,
     title: issue.title,
     type: issue.type,
     severity: issue.severity,
+    evidenceSnapshot: issue.evidence,
     acceptedAt: new Date().toISOString(),
+    status: "active",
   };
+  let backendLogged = false;
+  if (state.report?.spec_version_id) {
+    try {
+      const remoteRecord = await api("/api/suppressions", {
+        method: "POST",
+        body: JSON.stringify({
+          spec_version_id: state.report.spec_version_id,
+          issue_id: issue.id,
+          issue_type: issue.type,
+          severity: issue.severity,
+          issue_title: issue.title,
+          evidence_snapshot: issue.evidence,
+          owner,
+          reason,
+          expires_at: expiresAt,
+          created_by: owner,
+        }),
+      });
+      applySuppressionRecord(remoteRecord);
+      backendLogged = true;
+    } catch {
+      state.suppressions[issueId] = localRecord;
+    }
+  } else {
+    state.suppressions[issueId] = localRecord;
+  }
   state.suppressingIssueId = null;
   storeSuppressions();
   renderReport();
-  toast("Risk accepted and documented.");
+  toast(backendLogged ? "Risk accepted and logged." : "Risk accepted locally.");
 }
 
-function restoreIssue(issueId) {
-  if (!state.suppressions[issueId]) return;
+async function restoreIssue(issueId) {
+  const suppression = state.suppressions[issueId];
+  if (!suppression) return;
+  if (suppression.suppressionId) {
+    try {
+      await api(`/api/suppressions/${encodeURIComponent(suppression.suppressionId)}/reopen`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          reopened_by: suppression.owner || "Unknown",
+          reopened_reason: "Reopened from the SpecLint report.",
+        }),
+      });
+    } catch (error) {
+      toast(error.message || "Could not reopen this warning.");
+      return;
+    }
+  }
   delete state.suppressions[issueId];
   storeSuppressions();
   renderReport();
@@ -908,7 +991,7 @@ els.issuesList.addEventListener("click", (event) => {
   }
   const restoreButton = event.target.closest(".restore-issue");
   if (restoreButton) {
-    restoreIssue(restoreButton.dataset.issueId);
+    restoreIssue(restoreButton.dataset.issueId).catch((error) => toast(error.message));
     return;
   }
   if (event.target.closest(".cancel-suppression")) {
@@ -920,7 +1003,7 @@ els.issuesList.addEventListener("submit", (event) => {
   const form = event.target.closest(".suppression-form");
   if (!form) return;
   event.preventDefault();
-  saveSuppression(form.dataset.issueId, form);
+  saveSuppression(form.dataset.issueId, form).catch((error) => toast(error.message));
 });
 
 els.formattedButton.addEventListener("click", () => {

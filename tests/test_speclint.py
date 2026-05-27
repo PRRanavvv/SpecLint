@@ -1,6 +1,13 @@
+from datetime import date, timedelta
+import os
+import tempfile
 import unittest
 
 from fastapi.testclient import TestClient
+
+test_db = tempfile.NamedTemporaryFile(delete=False)
+test_db.close()
+os.environ["SPECLINT_DB_PATH"] = test_db.name
 
 from backend.app.analyzer import SpecInputError, analyze_spec
 from backend.app.main import app
@@ -34,10 +41,71 @@ class SpecLintTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("score", payload)
+        self.assertIn("spec_version_id", payload)
         self.assertEqual(payload["score_breakdown"]["base_score"], 100)
         self.assertIn("severity_counts", payload)
         self.assertTrue(payload["issues"])
         self.assertTrue(payload["rewritten_spec"])
+
+    def test_suppression_decision_log_can_accept_and_reopen_risk(self):
+        client = TestClient(app)
+        analysis = client.post(
+            "/api/analyze",
+            json={
+                "title": "Team member removal",
+                "spec_text": (
+                    "Admins can remove members from a workspace. "
+                    "Removed members lose access immediately and the team is notified. "
+                    "The process should be simple."
+                ),
+                "strictness": "ruthless",
+            },
+        )
+
+        self.assertEqual(analysis.status_code, 200)
+        report = analysis.json()
+        issue = next(item for item in report["issues"] if item["type"] == "permission_gap")
+        expires_at = (date.today() + timedelta(days=30)).isoformat()
+        created = client.post(
+            "/api/suppressions",
+            json={
+                "spec_version_id": report["spec_version_id"],
+                "issue_id": issue["id"],
+                "issue_type": issue["type"],
+                "severity": issue["severity"],
+                "issue_title": issue["title"],
+                "evidence_snapshot": issue["evidence"],
+                "owner": "Product Owner",
+                "reason": "MVP only supports single-admin workspaces for the first release.",
+                "expires_at": expires_at,
+                "created_by": "Product Owner",
+            },
+        )
+
+        self.assertEqual(created.status_code, 200)
+        suppression = created.json()
+        self.assertEqual(suppression["status"], "active")
+        self.assertEqual(suppression["issue_id"], issue["id"])
+        self.assertLessEqual(len(suppression["evidence_snapshot"]), 240)
+
+        listed = client.get(
+            "/api/suppressions",
+            params={"spec_version_id": report["spec_version_id"], "status": "active"},
+        )
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(len(listed.json()), 1)
+
+        reopened = client.patch(
+            f"/api/suppressions/{suppression['id']}/reopen",
+            json={
+                "reopened_by": "Security Reviewer",
+                "reopened_reason": "Workspace ownership rules changed.",
+            },
+        )
+
+        self.assertEqual(reopened.status_code, 200)
+        self.assertEqual(reopened.json()["status"], "reopened")
+        self.assertEqual(reopened.json()["reopened_reason"], "Workspace ownership rules changed.")
 
     def test_public_share_links_flag_lifecycle_and_do_not_treat_signing_in_as_action(self):
         report = analyze_spec(

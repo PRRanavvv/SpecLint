@@ -8,7 +8,16 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .analyzer import SpecInputError, analyze_spec
-from .models import ExampleSpec, SpecAnalysisRequest, SpecAnalysisResponse
+from .models import (
+    ExampleSpec,
+    SpecAnalysisRequest,
+    SpecAnalysisResponse,
+    SuppressionCreateRequest,
+    SuppressionRecord,
+    SuppressionReopenRequest,
+    SuppressionStatus,
+)
+from .storage import create_suppression, list_suppressions, reopen_suppression, save_spec_version
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,11 +97,42 @@ def examples() -> list[ExampleSpec]:
 @app.post("/api/analyze", response_model=SpecAnalysisResponse)
 def analyze(request: SpecAnalysisRequest) -> SpecAnalysisResponse:
     try:
-        return analyze_spec(
+        report = analyze_spec(
             title=request.title,
             spec_text=request.spec_text,
             source_spec_text=request.source_spec_text,
             strictness=request.strictness,
         )
+        report.spec_version_id = save_spec_version(
+            report,
+            title=request.title,
+            spec_text=request.spec_text,
+            strictness=request.strictness,
+        )
+        return report
     except SpecInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/suppressions", response_model=list[SuppressionRecord])
+def suppressions(
+    spec_version_id: str | None = None,
+    status: SuppressionStatus | None = None,
+) -> list[SuppressionRecord]:
+    return list_suppressions(spec_version_id=spec_version_id, status=status)
+
+
+@app.post("/api/suppressions", response_model=SuppressionRecord)
+def suppress(payload: SuppressionCreateRequest) -> SuppressionRecord:
+    return create_suppression(payload)
+
+
+@app.patch("/api/suppressions/{suppression_id}/reopen", response_model=SuppressionRecord)
+def reopen(
+    suppression_id: str,
+    payload: SuppressionReopenRequest,
+) -> SuppressionRecord:
+    record = reopen_suppression(suppression_id, payload)
+    if not record:
+        raise HTTPException(status_code=404, detail="Suppression not found.")
+    return record
