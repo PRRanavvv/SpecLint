@@ -9,6 +9,9 @@ import sqlite3
 from uuid import uuid4
 
 from .models import (
+    DecisionCreateRequest,
+    DecisionRecord,
+    DecisionStatus,
     SpecAnalysisResponse,
     Strictness,
     SuppressionCreateRequest,
@@ -85,6 +88,31 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS suppressions_one_active_idx
             ON suppressions (spec_version_id, issue_id)
             WHERE status = 'active';
+
+        CREATE TABLE IF NOT EXISTS decisions (
+            id TEXT PRIMARY KEY,
+            spec_version_id TEXT NOT NULL,
+            issue_id TEXT NOT NULL,
+            issue_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            issue_title TEXT NOT NULL,
+            evidence_snapshot TEXT NOT NULL,
+            evidence_hash TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            decision_note TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'decided',
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS decisions_spec_version_idx
+            ON decisions (spec_version_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS decisions_issue_idx
+            ON decisions (issue_id);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS decisions_one_per_issue_idx
+            ON decisions (spec_version_id, issue_id);
         """
     )
     connection.commit()
@@ -301,6 +329,146 @@ def reopen_suppression(
     return _record_from_row(updated)
 
 
+def list_decisions(*, spec_version_id: str | None = None) -> list[DecisionRecord]:
+    conditions: list[str] = []
+    params: list[str] = []
+    if spec_version_id:
+        conditions.append("spec_version_id = ?")
+        params.append(spec_version_id)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    with _connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT *
+            FROM decisions
+            {where}
+            ORDER BY created_at DESC
+            """,
+            params,
+        ).fetchall()
+    return [_decision_from_row(row) for row in rows]
+
+
+def create_decision(payload: DecisionCreateRequest) -> DecisionRecord:
+    evidence_snapshot = compact_quote(payload.evidence_snapshot, limit=240)
+    evidence_hash = payload.evidence_hash or _hash_text(evidence_snapshot)
+    created_by = payload.created_by or payload.owner
+    now = _now()
+    with _connect() as connection:
+        existing = connection.execute(
+            """
+            SELECT *
+            FROM decisions
+            WHERE spec_version_id = ?
+              AND issue_id = ?
+            """,
+            (payload.spec_version_id, payload.issue_id),
+        ).fetchone()
+        if existing:
+            connection.execute(
+                """
+                UPDATE decisions
+                SET issue_type = ?,
+                    severity = ?,
+                    issue_title = ?,
+                    evidence_snapshot = ?,
+                    evidence_hash = ?,
+                    owner = ?,
+                    decision_note = ?,
+                    created_by = ?
+                WHERE id = ?
+                """,
+                (
+                    payload.issue_type.value,
+                    payload.severity.value,
+                    payload.issue_title,
+                    evidence_snapshot,
+                    evidence_hash,
+                    payload.owner,
+                    payload.decision_note,
+                    created_by,
+                    existing["id"],
+                ),
+            )
+            decision_id = existing["id"]
+        else:
+            decision_id = f"dec_{uuid4().hex[:12]}"
+            connection.execute(
+                """
+                INSERT INTO decisions (
+                    id,
+                    spec_version_id,
+                    issue_id,
+                    issue_type,
+                    severity,
+                    issue_title,
+                    evidence_snapshot,
+                    evidence_hash,
+                    owner,
+                    decision_note,
+                    status,
+                    created_by,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'decided', ?, ?)
+                """,
+                (
+                    decision_id,
+                    payload.spec_version_id,
+                    payload.issue_id,
+                    payload.issue_type.value,
+                    payload.severity.value,
+                    payload.issue_title,
+                    evidence_snapshot,
+                    evidence_hash,
+                    payload.owner,
+                    payload.decision_note,
+                    created_by,
+                    now,
+                ),
+            )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM decisions WHERE id = ?",
+            (decision_id,),
+        ).fetchone()
+    return _decision_from_row(row)
+
+
+def decisions_markdown(*, spec_version_id: str | None = None) -> str:
+    decisions = list_decisions(spec_version_id=spec_version_id)
+    lines = ["# SpecLint Requirements Decisions", ""]
+    if not decisions:
+        lines.append("No product decisions recorded.")
+        return "\n".join(lines)
+
+    for decision in decisions:
+        lines.extend(
+            [
+                f"## {decision.issue_title}",
+                "",
+                f"- Decision ID: `{decision.id}`",
+                f"- Spec version: `{decision.spec_version_id}`",
+                f"- Issue: `{decision.issue_id}`",
+                f"- Type: {decision.issue_type.value}",
+                f"- Severity: {decision.severity.value}",
+                f"- Owner: {decision.owner}",
+                f"- Created by: {decision.created_by}",
+                f"- Created at: {decision.created_at.isoformat()}",
+                "",
+                "### Evidence",
+                "",
+                decision.evidence_snapshot,
+                "",
+                "### Decision",
+                "",
+                decision.decision_note,
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def _record_from_row(row: sqlite3.Row) -> SuppressionRecord:
     status = row["status"]
     if status == SuppressionStatus.active.value and row["expires_at"] < date.today().isoformat():
@@ -323,6 +491,24 @@ def _record_from_row(row: sqlite3.Row) -> SuppressionRecord:
         reopened_by=row["reopened_by"],
         reopened_at=row["reopened_at"],
         reopened_reason=row["reopened_reason"],
+    )
+
+
+def _decision_from_row(row: sqlite3.Row) -> DecisionRecord:
+    return DecisionRecord(
+        id=row["id"],
+        spec_version_id=row["spec_version_id"],
+        issue_id=row["issue_id"],
+        issue_type=row["issue_type"],
+        severity=row["severity"],
+        issue_title=row["issue_title"],
+        evidence_snapshot=row["evidence_snapshot"],
+        evidence_hash=row["evidence_hash"],
+        owner=row["owner"],
+        decision_note=row["decision_note"],
+        status=row["status"] or DecisionStatus.decided.value,
+        created_by=row["created_by"],
+        created_at=row["created_at"],
     )
 
 

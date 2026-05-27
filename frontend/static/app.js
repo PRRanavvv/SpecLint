@@ -1,11 +1,15 @@
 const SUPPRESSIONS_STORAGE_KEY = "speclint-suppressions";
+const DECISIONS_STORAGE_KEY = "speclint-decisions";
 
 const state = {
   report: null,
   examples: [],
   history: [],
   suppressions: loadSuppressions(),
+  decisions: loadDecisions(),
   suppressingIssueId: null,
+  decidingIssueId: null,
+  issueFilter: "action",
   rewriteView: "formatted",
   sourceSpecText: null,
   preserveSourceForNextRun: false,
@@ -91,6 +95,7 @@ const els = {
   intentNarrative: document.querySelector("#intentNarrative"),
   intentGrid: document.querySelector("#intentGrid"),
   issueCount: document.querySelector("#issueCount"),
+  issueFilters: document.querySelectorAll("[data-issue-filter]"),
   issuesList: document.querySelector("#issuesList"),
   categoryGuide: document.querySelector("#categoryGuide"),
   testsList: document.querySelector("#testsList"),
@@ -164,6 +169,24 @@ function storeSuppressions() {
   }
 }
 
+function loadDecisions() {
+  try {
+    const raw = window.localStorage.getItem(DECISIONS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeDecisions() {
+  try {
+    window.localStorage.setItem(DECISIONS_STORAGE_KEY, JSON.stringify(state.decisions));
+  } catch {
+    toast("Decision saved for this session, but browser storage is blocked.");
+  }
+}
+
 function todayIso() {
   const today = new Date();
   today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
@@ -186,14 +209,26 @@ function activeSuppression(issueId) {
   return suppression.expiresAt >= todayIso() ? suppression : null;
 }
 
+function activeDecision(issueId) {
+  const decision = state.decisions[issueId];
+  if (!decision) return null;
+  return !decision.status || decision.status === "decided" ? decision : null;
+}
+
 function openIssues(issues = []) {
-  return issues.filter((issue) => !activeSuppression(issue.id));
+  return issues.filter((issue) => !activeSuppression(issue.id) && !activeDecision(issue.id));
 }
 
 function acceptedRiskRecords(issues = []) {
   return issues
     .map((issue) => ({ issue, suppression: activeSuppression(issue.id) }))
     .filter((record) => record.suppression);
+}
+
+function decisionRecords(issues = []) {
+  return issues
+    .map((issue) => ({ issue, decision: activeDecision(issue.id) }))
+    .filter((record) => record.decision);
 }
 
 function severityCountsForIssues(issues = []) {
@@ -245,6 +280,30 @@ function applySuppressionRecord(record) {
   state.suppressions[normalized.issueId] = normalized;
 }
 
+function normalizeDecision(record) {
+  if (!record) return null;
+  return {
+    decisionId: record.id || record.decisionId || null,
+    specVersionId: record.spec_version_id || record.specVersionId || null,
+    issueId: record.issue_id || record.issueId || null,
+    owner: record.owner || "",
+    decisionNote: record.decision_note || record.decisionNote || "",
+    title: record.issue_title || record.title || "",
+    type: record.issue_type || record.type || "",
+    severity: record.severity || "",
+    evidenceSnapshot: record.evidence_snapshot || record.evidenceSnapshot || "",
+    evidenceHash: record.evidence_hash || record.evidenceHash || "",
+    createdAt: record.created_at || record.createdAt || "",
+    status: record.status || "decided",
+  };
+}
+
+function applyDecisionRecord(record) {
+  const normalized = normalizeDecision(record);
+  if (!normalized?.issueId) return;
+  state.decisions[normalized.issueId] = normalized;
+}
+
 async function hydrateSuppressions(report) {
   if (!report?.spec_version_id) return;
   try {
@@ -255,6 +314,17 @@ async function hydrateSuppressions(report) {
     storeSuppressions();
   } catch {
     // Local suppressions still work when the backend decision log is unavailable.
+  }
+}
+
+async function hydrateDecisions(report) {
+  if (!report?.spec_version_id) return;
+  try {
+    const records = await api(`/api/decisions?spec_version_id=${encodeURIComponent(report.spec_version_id)}`);
+    records.forEach(applyDecisionRecord);
+    storeDecisions();
+  } catch {
+    // Local decisions still work when the backend requirements log is unavailable.
   }
 }
 
@@ -329,6 +399,7 @@ async function analyze({ recordHistory = true } = {}) {
     });
     state.report = report;
     await hydrateSuppressions(report);
+    await hydrateDecisions(report);
     if (recordHistory) addHistory(report, specText);
     renderReport();
   } catch (error) {
@@ -421,6 +492,7 @@ function renderReport() {
 function renderInputRejected() {
   state.report = null;
   state.suppressingIssueId = null;
+  state.decidingIssueId = null;
   els.scoreValue.textContent = "--";
   els.scoreLabel.textContent = "Improper input";
   els.verdictText.textContent = "IMPROPER INPUT";
@@ -498,26 +570,34 @@ function renderIntent(intent) {
 function renderIssues(issues) {
   const visibleIssues = openIssues(issues);
   const acceptedRisks = acceptedRiskRecords(issues);
+  const decisions = decisionRecords(issues);
   const acceptedCount = acceptedRisks.length;
-  els.issueCount.textContent = `${visibleIssues.length} open${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
+  renderIssueFilterState();
+  els.issueCount.textContent = `${visibleIssues.length} open${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
   if (!issues.length) {
     els.issuesList.className = "issue-list empty-state";
     els.issuesList.textContent = "No lint issues found.";
     return;
   }
-  if (!visibleIssues.length && acceptedRisks.length) {
-    els.issuesList.className = "issue-list";
-    els.issuesList.innerHTML = acceptedRiskMarkup(acceptedRisks);
-    return;
-  }
   els.issuesList.className = "issue-list";
-  const issueMarkup = visibleIssues.map((issue) => issueMarkupFor(issue)).join("");
-  els.issuesList.innerHTML = `${issueMarkup}${acceptedRiskMarkup(acceptedRisks)}`;
+  const sections = [];
+  if (state.issueFilter === "action" || state.issueFilter === "all") {
+    sections.push(visibleIssues.map((issue) => issueMarkupFor(issue)).join(""));
+  }
+  if (state.issueFilter === "all") {
+    sections.push(decisionMarkup(decisions));
+  }
+  if (state.issueFilter === "accepted" || state.issueFilter === "all") {
+    sections.push(acceptedRiskMarkup(acceptedRisks));
+  }
+  const markup = sections.join("");
+  els.issuesList.innerHTML = markup || `<div class="empty-state">${emptyIssueFilterCopy()}</div>`;
 }
 
 function issueMarkupFor(issue) {
   const existing = state.suppressions[issue.id] || {};
   const isSuppressing = state.suppressingIssueId === issue.id;
+  const isDeciding = state.decidingIssueId === issue.id;
   return `
         <article class="issue-item">
           <div class="issue-topline">
@@ -526,8 +606,9 @@ function issueMarkupFor(issue) {
               <span class="tag">${humanize(issue.type)}</span>
             </div>
             <div class="issue-actions">
-              <button class="ghost-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Add fix to draft</button>
-              <button class="ghost-button compact suppress-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Accept risk</button>
+              <button class="ghost-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Fix</button>
+              <button class="ghost-button compact decide-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Decide</button>
+              <button class="ghost-button compact suppress-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Accept</button>
             </div>
           </div>
           <h3>${escapeHtml(issue.title)}</h3>
@@ -541,6 +622,32 @@ function issueMarkupFor(issue) {
             <span class="issue-label">Question to answer</span>
             <p>${escapeHtml(issue.test_prompt)}</p>
           </div>
+          ${
+            isDeciding
+              ? `
+                <form class="decision-form" data-issue-id="${escapeHtml(issue.id)}">
+                  <div>
+                    <strong>Decide on this requirement</strong>
+                    <p>Capture the product or security call that resolves this warning.</p>
+                  </div>
+                  <div class="decision-fields">
+                    <label>
+                      <span>Owner</span>
+                      <input name="owner" maxlength="80" value="" placeholder="Decision owner" required />
+                    </label>
+                    <label class="decision-note">
+                      <span>Decision</span>
+                      <textarea name="decisionNote" maxlength="620" rows="3" placeholder="What did the team decide?" required></textarea>
+                    </label>
+                  </div>
+                  <div class="button-row">
+                    <button class="primary compact" type="submit">Save decision</button>
+                    <button class="ghost-button compact cancel-decision" type="button">Cancel</button>
+                  </div>
+                </form>
+              `
+              : ""
+          }
           ${
             isSuppressing
               ? `
@@ -575,6 +682,20 @@ function issueMarkupFor(issue) {
       `;
 }
 
+function renderIssueFilterState() {
+  els.issueFilters.forEach((button) => {
+    const active = button.dataset.issueFilter === state.issueFilter;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
+function emptyIssueFilterCopy() {
+  if (state.issueFilter === "accepted") return "No accepted risks for this run.";
+  if (state.issueFilter === "all") return "No diagnostics in this view.";
+  return "No action-required issues. Decisions and accepted risks are still available in All.";
+}
+
 function acceptedRiskMarkup(records) {
   if (!records.length) return "";
   return `
@@ -606,6 +727,45 @@ function acceptedRiskMarkup(records) {
                 <p>${escapeHtml(formatDate(suppression.expiresAt))}</p>
                 <span class="issue-label">Reason</span>
                 <p>${escapeHtml(suppression.reason)}</p>
+              </div>
+            </article>
+          `,
+        )
+        .join("")}
+    </section>
+  `;
+}
+
+function decisionMarkup(records) {
+  if (!records.length) return "";
+  return `
+    <section class="decision-group" aria-label="Requirements decisions">
+      <div class="accepted-risk-header">
+        <div>
+          <strong>Requirements log</strong>
+          <p>These warnings were resolved by an explicit product or security decision.</p>
+        </div>
+        <span class="count-pill">${records.length}</span>
+      </div>
+      ${records
+        .map(
+          ({ issue, decision }) => `
+            <article class="issue-item decided-issue">
+              <div class="issue-topline">
+                <div class="tag-row">
+                  <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
+                  <span class="tag">${humanize(issue.type)}</span>
+                  <span class="tag">Decided</span>
+                </div>
+              </div>
+              <h3>${escapeHtml(issue.title)}</h3>
+              <div class="issue-grid">
+                <span class="issue-label">Owner</span>
+                <p>${escapeHtml(decision.owner)}</p>
+                <span class="issue-label">Decision</span>
+                <p>${escapeHtml(decision.decisionNote)}</p>
+                <span class="issue-label">Evidence</span>
+                <p>${escapeHtml(decision.evidenceSnapshot || issue.evidence)}</p>
               </div>
             </article>
           `,
@@ -782,12 +942,76 @@ function applyIssueFix(issueId) {
 function openSuppressionForm(issueId) {
   if (!state.report?.issues.some((issue) => issue.id === issueId)) return;
   state.suppressingIssueId = issueId;
+  state.decidingIssueId = null;
   renderReport();
 }
 
 function cancelSuppressionForm() {
   state.suppressingIssueId = null;
   renderReport();
+}
+
+function openDecisionForm(issueId) {
+  if (!state.report?.issues.some((issue) => issue.id === issueId)) return;
+  state.decidingIssueId = issueId;
+  state.suppressingIssueId = null;
+  renderReport();
+}
+
+function cancelDecisionForm() {
+  state.decidingIssueId = null;
+  renderReport();
+}
+
+async function saveDecision(issueId, form) {
+  const formData = new FormData(form);
+  const owner = String(formData.get("owner") || "").trim();
+  const decisionNote = String(formData.get("decisionNote") || "").trim();
+  if (!owner || !decisionNote) {
+    toast("Owner and decision are required.");
+    return;
+  }
+  const issue = state.report?.issues.find((item) => item.id === issueId);
+  if (!issue) return;
+  const localRecord = {
+    owner,
+    decisionNote,
+    title: issue.title,
+    type: issue.type,
+    severity: issue.severity,
+    evidenceSnapshot: issue.evidence,
+    createdAt: new Date().toISOString(),
+    status: "decided",
+  };
+  let backendLogged = false;
+  if (state.report?.spec_version_id) {
+    try {
+      const remoteRecord = await api("/api/decisions", {
+        method: "POST",
+        body: JSON.stringify({
+          spec_version_id: state.report.spec_version_id,
+          issue_id: issue.id,
+          issue_type: issue.type,
+          severity: issue.severity,
+          issue_title: issue.title,
+          evidence_snapshot: issue.evidence,
+          owner,
+          decision_note: decisionNote,
+          created_by: owner,
+        }),
+      });
+      applyDecisionRecord(remoteRecord);
+      backendLogged = true;
+    } catch {
+      state.decisions[issueId] = localRecord;
+    }
+  } else {
+    state.decisions[issueId] = localRecord;
+  }
+  state.decidingIssueId = null;
+  storeDecisions();
+  renderReport();
+  toast(backendLogged ? "Decision saved to requirements log." : "Decision saved locally.");
 }
 
 async function saveSuppression(issueId, form) {
@@ -896,10 +1120,16 @@ function reportMarkdown() {
         `- [${issue.severity}] ${issue.title}: accepted by ${suppression.owner} until ${suppression.expiresAt}. Reason: ${suppression.reason}`,
     )
     .join("\n");
+  const decisions = decisionRecords(report.issues)
+    .map(
+      ({ issue, decision }) =>
+        `- [${issue.severity}] ${issue.title}: decided by ${decision.owner}. Decision: ${decision.decisionNote}`,
+    )
+    .join("\n");
   const tests = report.acceptance_tests
     .map((test) => `- ${test.name}: Given ${test.given}, when ${test.when}, then ${test.then}.`)
     .join("\n");
-  return `# ${report.title}\n\nScore: ${report.score}/100 - ${verdictLabel(report.verdict)}\n\n${report.summary}\n\n## Open Issues\n${issues || "None"}\n\n## Accepted Risks\n${acceptedRisks || "None"}\n\n## Acceptance Tests\n${tests || "None"}\n\n## Rewritten Spec\n${report.rewritten_spec}\n`;
+  return `# ${report.title}\n\nScore: ${report.score}/100 - ${verdictLabel(report.verdict)}\n\n${report.summary}\n\n## Open Issues\n${issues || "None"}\n\n## Requirements Decisions\n${decisions || "None"}\n\n## Accepted Risks\n${acceptedRisks || "None"}\n\n## Acceptance Tests\n${tests || "None"}\n\n## Rewritten Spec\n${report.rewritten_spec}\n`;
 }
 
 function downloadMarkdown() {
@@ -968,6 +1198,13 @@ els.themeToggle?.addEventListener("click", () => {
   setTheme(currentTheme() === "dark" ? "light" : "dark");
 });
 
+els.issueFilters.forEach((button) => {
+  button.addEventListener("click", () => {
+    state.issueFilter = button.dataset.issueFilter || "action";
+    renderReport();
+  });
+});
+
 els.exampleSelect.addEventListener("change", () => {
   const index = Number(els.exampleSelect.value);
   const example = state.examples[index];
@@ -989,6 +1226,11 @@ els.issuesList.addEventListener("click", (event) => {
     openSuppressionForm(suppressButton.dataset.issueId);
     return;
   }
+  const decideButton = event.target.closest(".decide-issue");
+  if (decideButton) {
+    openDecisionForm(decideButton.dataset.issueId);
+    return;
+  }
   const restoreButton = event.target.closest(".restore-issue");
   if (restoreButton) {
     restoreIssue(restoreButton.dataset.issueId).catch((error) => toast(error.message));
@@ -996,14 +1238,24 @@ els.issuesList.addEventListener("click", (event) => {
   }
   if (event.target.closest(".cancel-suppression")) {
     cancelSuppressionForm();
+    return;
+  }
+  if (event.target.closest(".cancel-decision")) {
+    cancelDecisionForm();
   }
 });
 
 els.issuesList.addEventListener("submit", (event) => {
-  const form = event.target.closest(".suppression-form");
+  const suppressionForm = event.target.closest(".suppression-form");
+  const decisionForm = event.target.closest(".decision-form");
+  const form = suppressionForm || decisionForm;
   if (!form) return;
   event.preventDefault();
-  saveSuppression(form.dataset.issueId, form).catch((error) => toast(error.message));
+  if (decisionForm) {
+    saveDecision(form.dataset.issueId, form).catch((error) => toast(error.message));
+  } else {
+    saveSuppression(form.dataset.issueId, form).catch((error) => toast(error.message));
+  }
 });
 
 els.formattedButton.addEventListener("click", () => {

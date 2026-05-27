@@ -4,11 +4,13 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .analyzer import SpecInputError, analyze_spec
 from .models import (
+    DecisionCreateRequest,
+    DecisionRecord,
     ExampleSpec,
     SpecAnalysisRequest,
     SpecAnalysisResponse,
@@ -17,7 +19,15 @@ from .models import (
     SuppressionReopenRequest,
     SuppressionStatus,
 )
-from .storage import create_suppression, list_suppressions, reopen_suppression, save_spec_version
+from .storage import (
+    create_decision,
+    create_suppression,
+    decisions_markdown,
+    list_decisions,
+    list_suppressions,
+    reopen_suppression,
+    save_spec_version,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -136,3 +146,18 @@ def reopen(
     if not record:
         raise HTTPException(status_code=404, detail="Suppression not found.")
     return record
+
+
+@app.get("/api/decisions", response_model=list[DecisionRecord])
+def decisions(spec_version_id: str | None = None) -> list[DecisionRecord]:
+    return list_decisions(spec_version_id=spec_version_id)
+
+
+@app.post("/api/decisions", response_model=DecisionRecord)
+def decide(payload: DecisionCreateRequest) -> DecisionRecord:
+    return create_decision(payload)
+
+
+@app.get("/api/decisions/export", response_class=PlainTextResponse)
+def export_decisions(spec_version_id: str | None = None) -> str:
+    return decisions_markdown(spec_version_id=spec_version_id)

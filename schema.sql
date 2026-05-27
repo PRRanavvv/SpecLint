@@ -44,3 +44,28 @@ CREATE INDEX IF NOT EXISTS suppressions_issue_idx
 CREATE UNIQUE INDEX IF NOT EXISTS suppressions_one_active_idx
     ON suppressions (spec_version_id, issue_id)
     WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS decisions (
+    id TEXT PRIMARY KEY,
+    spec_version_id TEXT NOT NULL,
+    issue_id TEXT NOT NULL,
+    issue_type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    issue_title TEXT NOT NULL,
+    evidence_snapshot TEXT NOT NULL,
+    evidence_hash TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    decision_note TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'decided',
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS decisions_spec_version_idx
+    ON decisions (spec_version_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS decisions_issue_idx
+    ON decisions (issue_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS decisions_one_per_issue_idx
+    ON decisions (spec_version_id, issue_id);

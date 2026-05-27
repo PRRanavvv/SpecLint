@@ -26,6 +26,10 @@ class SuppressionStatus(str, Enum):
     reopened = "reopened"
 
 
+class DecisionStatus(str, Enum):
+    decided = "decided"
+
+
 class IssueType(str, Enum):
     ambiguity = "ambiguity"
     missing_edge_case = "missing_edge_case"
@@ -175,3 +179,32 @@ class SuppressionRecord(BaseModel):
     reopened_by: str | None = None
     reopened_at: datetime | None = None
     reopened_reason: str | None = None
+
+
+class DecisionCreateRequest(BaseModel):
+    spec_version_id: str = Field(default="local", max_length=80)
+    issue_id: str = Field(max_length=80)
+    issue_type: IssueType
+    severity: Severity
+    issue_title: str = Field(max_length=180)
+    evidence_snapshot: str = Field(max_length=600)
+    evidence_hash: str | None = Field(default=None, max_length=80)
+    owner: str = Field(min_length=1, max_length=120)
+    decision_note: str = Field(min_length=1, max_length=800)
+    created_by: str | None = Field(default=None, max_length=120)
+
+
+class DecisionRecord(BaseModel):
+    id: str
+    spec_version_id: str
+    issue_id: str
+    issue_type: IssueType
+    severity: Severity
+    issue_title: str
+    evidence_snapshot: str
+    evidence_hash: str
+    owner: str
+    decision_note: str
+    status: DecisionStatus
+    created_by: str
+    created_at: datetime

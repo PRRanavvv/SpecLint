@@ -20,6 +20,7 @@ It can:
 - Generate acceptance tests in a Given/When/Then format
 - Rewrite the requirement into a cleaner version
 - Keep a short run history so the user can compare improvements
+- Save product decisions when a warning needs a team call
 - Let users accept a warning with an owner, reason, and expiry date
 - Store accepted risks in a backend decision log
 - Support both light theme and dark theme
@@ -162,9 +163,12 @@ POST /api/analyze
 GET  /api/suppressions
 POST /api/suppressions
 PATCH /api/suppressions/{id}/reopen
+GET  /api/decisions
+POST /api/decisions
+GET  /api/decisions/export
 ```
 
-Most users do not need to call these directly. The website uses them in the background to analyze specs and keep the accepted-risk log in sync.
+Most users do not need to call these directly. The website uses them in the background to analyze specs, keep the accepted-risk log in sync, and save requirement decisions.
 
 ## Current Status
 

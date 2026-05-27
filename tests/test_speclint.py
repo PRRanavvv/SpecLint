@@ -107,6 +107,59 @@ class SpecLintTests(unittest.TestCase):
         self.assertEqual(reopened.json()["status"], "reopened")
         self.assertEqual(reopened.json()["reopened_reason"], "Workspace ownership rules changed.")
 
+    def test_requirement_decisions_can_be_logged_and_exported(self):
+        client = TestClient(app)
+        analysis = client.post(
+            "/api/analyze",
+            json={
+                "title": "Workspace ownership",
+                "spec_text": (
+                    "Workspace owners can transfer ownership to another member. "
+                    "The new owner gets admin access immediately. "
+                    "The process should be simple."
+                ),
+            },
+        )
+
+        self.assertEqual(analysis.status_code, 200)
+        report = analysis.json()
+        issue = next(item for item in report["issues"] if item["type"] == "consent_gap")
+        created = client.post(
+            "/api/decisions",
+            json={
+                "spec_version_id": report["spec_version_id"],
+                "issue_id": issue["id"],
+                "issue_type": issue["type"],
+                "severity": issue["severity"],
+                "issue_title": issue["title"],
+                "evidence_snapshot": issue["evidence"],
+                "owner": "Product Lead",
+                "decision_note": "Receiving owner must accept before transfer takes effect.",
+                "created_by": "Product Lead",
+            },
+        )
+
+        self.assertEqual(created.status_code, 200)
+        decision = created.json()
+        self.assertEqual(decision["status"], "decided")
+        self.assertEqual(decision["issue_id"], issue["id"])
+        self.assertLessEqual(len(decision["evidence_snapshot"]), 240)
+
+        listed = client.get(
+            "/api/decisions",
+            params={"spec_version_id": report["spec_version_id"]},
+        )
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(len(listed.json()), 1)
+
+        exported = client.get(
+            "/api/decisions/export",
+            params={"spec_version_id": report["spec_version_id"]},
+        )
+        self.assertEqual(exported.status_code, 200)
+        self.assertIn("Receiving owner must accept", exported.text)
+        self.assertIn("SpecLint Requirements Decisions", exported.text)
+
     def test_public_share_links_flag_lifecycle_and_do_not_treat_signing_in_as_action(self):
         report = analyze_spec(
             title="Public share links",

@@ -137,7 +137,14 @@
               <p class="eyebrow">Diagnostics</p>
               <h2>Lint issues</h2>
             </div>
-            <span id="issueCount" class="count-pill">0 issues</span>
+            <div class="issue-header-actions">
+              <div class="issue-filters" aria-label="Issue filter">
+                <button class="issue-filter active" type="button" data-issue-filter="action">Action required</button>
+                <button class="issue-filter" type="button" data-issue-filter="all">All</button>
+                <button class="issue-filter" type="button" data-issue-filter="accepted">Accepted risks</button>
+              </div>
+              <span id="issueCount" class="count-pill">0 issues</span>
+            </div>
           </div>
           <div id="issuesList" class="issue-list empty-state">No issues yet.</div>
         </section>
