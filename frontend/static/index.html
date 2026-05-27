@@ -3,7 +3,21 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>SpecLint</title>
+    <script>
+      (() => {
+        let storedTheme = null;
+        try {
+          storedTheme = localStorage.getItem("speclint-theme");
+        } catch {
+          storedTheme = null;
+        }
+        const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+        const theme = storedTheme || (prefersDark ? "dark" : "light");
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -32,7 +46,10 @@
           <span><i class="medium"></i> Medium <b id="mediumCount">0</b></span>
           <span><i class="low"></i> Low <b id="lowCount">0</b></span>
         </div>
-        <footer class="tiny-footer">Built by Pranav &middot; <a href="https://github.com/PRRanavvv/SpecLint">GitHub</a></footer>
+        <footer class="tiny-footer">
+          <span class="creator-mark" aria-hidden="true">PR</span>
+          <span>Built by <strong>Pranav</strong> &middot; <a href="https://github.com/PRRanavvv/SpecLint">GitHub</a></span>
+        </footer>
       </aside>
 
       <main class="workspace">
@@ -42,6 +59,16 @@
             <h1>Compile vague specs before they become bugs.</h1>
           </div>
           <div class="top-actions">
+            <div class="theme-switch" role="group" aria-label="Theme">
+              <button id="lightThemeButton" class="theme-option" type="button" data-theme-choice="light" aria-pressed="false" title="Use light theme">
+                <span class="theme-icon theme-icon-light" aria-hidden="true"></span>
+                <span>Light</span>
+              </button>
+              <button id="darkThemeButton" class="theme-option" type="button" data-theme-choice="dark" aria-pressed="false" title="Use dark theme">
+                <span class="theme-icon theme-icon-dark" aria-hidden="true"></span>
+                <span>Dark</span>
+              </button>
+            </div>
             <select id="exampleSelect" aria-label="Load example">
               <option value="">Examples</option>
             </select>

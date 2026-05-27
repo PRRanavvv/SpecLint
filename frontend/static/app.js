@@ -8,6 +8,7 @@ const state = {
 };
 
 const API_BASE_URL = (window.SPECLINT_CONFIG?.apiBaseUrl || "").replace(/\/$/, "");
+const THEME_STORAGE_KEY = "speclint-theme";
 
 const strictnessCopy = {
   lenient: "Lenient - early-stage ideas, ignores minor gaps, flags only blockers.",
@@ -98,8 +99,43 @@ const els = {
   copyRewriteButton: document.querySelector("#copyRewriteButton"),
   shareButton: document.querySelector("#shareButton"),
   downloadButton: document.querySelector("#downloadButton"),
+  themeButtons: document.querySelectorAll("[data-theme-choice]"),
   toast: document.querySelector("#toast"),
 };
+
+function getStoredTheme() {
+  try {
+    const theme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return theme === "dark" || theme === "light" ? theme : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeTheme(theme) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // The selected theme still applies for this page load if storage is blocked.
+  }
+}
+
+function systemTheme() {
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+}
+
+function setTheme(theme, { persist = true } = {}) {
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = nextTheme;
+  if (persist) storeTheme(nextTheme);
+  els.themeButtons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.themeChoice === nextTheme));
+  });
+}
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -636,6 +672,10 @@ els.strictnessSelect.addEventListener("change", () => {
   els.strictnessHelp.textContent = strictnessCopy[els.strictnessSelect.value];
 });
 
+els.themeButtons.forEach((button) => {
+  button.addEventListener("click", () => setTheme(button.dataset.themeChoice));
+});
+
 els.exampleSelect.addEventListener("change", () => {
   const index = Number(els.exampleSelect.value);
   const example = state.examples[index];
@@ -684,6 +724,14 @@ els.historyList.addEventListener("click", (event) => {
   els.specInput.value = run.specText;
   state.sourceSpecText = run.specText;
   toast("Previous draft restored.");
+});
+
+const storedTheme = getStoredTheme();
+setTheme(storedTheme || currentTheme() || systemTheme(), { persist: Boolean(storedTheme) });
+
+const themePreference = window.matchMedia?.("(prefers-color-scheme: dark)");
+themePreference?.addEventListener?.("change", (event) => {
+  if (!getStoredTheme()) setTheme(event.matches ? "dark" : "light", { persist: false });
 });
 
 loadExamples()
