@@ -17,6 +17,7 @@ const state = {
 
 const API_BASE_URL = (window.SPECLINT_CONFIG?.apiBaseUrl || "").replace(/\/$/, "");
 const THEME_STORAGE_KEY = "speclint-theme";
+const FONT_STORAGE_KEY = "speclint-font";
 
 const strictnessCopy = {
   lenient: "Lenient - early-stage ideas, ignores minor gaps, flags only blockers.",
@@ -112,6 +113,8 @@ const els = {
   downloadButton: document.querySelector("#downloadButton"),
   themeToggle: document.querySelector("#themeToggle"),
   themeToggleLabel: document.querySelector("#themeToggleLabel"),
+  fontToggle: document.querySelector("#fontToggle"),
+  fontToggleLabel: document.querySelector("#fontToggleLabel"),
   toast: document.querySelector("#toast"),
 };
 
@@ -132,6 +135,23 @@ function storeTheme(theme) {
   }
 }
 
+function getStoredFont() {
+  try {
+    const font = window.localStorage.getItem(FONT_STORAGE_KEY);
+    return font === "system" || font === "inter" ? font : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeFont(font) {
+  try {
+    window.localStorage.setItem(FONT_STORAGE_KEY, font);
+  } catch {
+    // The selected font still applies for this page load if storage is blocked.
+  }
+}
+
 function systemTheme() {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
@@ -140,16 +160,33 @@ function currentTheme() {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
 
+function currentFont() {
+  return document.documentElement.dataset.font === "system" ? "system" : "inter";
+}
+
 function setTheme(theme, { persist = true } = {}) {
   const nextTheme = theme === "dark" ? "dark" : "light";
   document.documentElement.dataset.theme = nextTheme;
   if (persist) storeTheme(nextTheme);
   const isDark = nextTheme === "dark";
   els.themeToggle?.setAttribute("aria-pressed", String(isDark));
-  els.themeToggle?.setAttribute("aria-label", isDark ? "Switch to day mode" : "Switch to night mode");
-  els.themeToggle?.setAttribute("title", isDark ? "Switch to day mode" : "Switch to night mode");
+  els.themeToggle?.setAttribute("aria-label", isDark ? "Switch to day mode" : "Switch to dark mode");
+  els.themeToggle?.setAttribute("title", isDark ? "Switch to day mode" : "Switch to dark mode");
   if (els.themeToggleLabel) {
-    els.themeToggleLabel.textContent = isDark ? "Night mode" : "Day mode";
+    els.themeToggleLabel.textContent = isDark ? "Dark mode" : "Day mode";
+  }
+}
+
+function setFont(font, { persist = true } = {}) {
+  const nextFont = font === "system" ? "system" : "inter";
+  document.documentElement.dataset.font = nextFont;
+  if (persist) storeFont(nextFont);
+  const isInter = nextFont === "inter";
+  els.fontToggle?.setAttribute("aria-pressed", String(isInter));
+  els.fontToggle?.setAttribute("aria-label", isInter ? "Switch to system font" : "Switch to Inter font");
+  els.fontToggle?.setAttribute("title", isInter ? "Switch to system font" : "Switch to Inter font");
+  if (els.fontToggleLabel) {
+    els.fontToggleLabel.textContent = isInter ? "Inter" : "System";
   }
 }
 
@@ -1412,6 +1449,10 @@ els.themeToggle?.addEventListener("click", () => {
   setTheme(currentTheme() === "dark" ? "light" : "dark");
 });
 
+els.fontToggle?.addEventListener("click", () => {
+  setFont(currentFont() === "inter" ? "system" : "inter");
+});
+
 els.issueFilters.forEach((button) => {
   button.addEventListener("click", () => {
     state.issueFilter = button.dataset.issueFilter || "action";
@@ -1522,6 +1563,9 @@ els.historyList.addEventListener("click", (event) => {
 
 const storedTheme = getStoredTheme();
 setTheme(storedTheme || currentTheme() || systemTheme(), { persist: Boolean(storedTheme) });
+
+const storedFont = getStoredFont();
+setFont(storedFont || currentFont(), { persist: Boolean(storedFont) });
 
 const themePreference = window.matchMedia?.("(prefers-color-scheme: dark)");
 themePreference?.addEventListener?.("change", (event) => {
