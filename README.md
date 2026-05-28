@@ -23,6 +23,7 @@ It can:
 - Save product decisions when a warning needs a team call
 - Let users accept a warning with an owner, reason, and expiry date
 - Store accepted risks in a backend decision log
+- Tune warning severity by project domain and risk overlays
 - Support both light theme and dark theme
 
 The goal is not to replace thinking. The goal is to help catch weak spots before they become bugs later.
@@ -46,15 +47,19 @@ This makes the spec more useful before anyone starts building.
 1. Enter a title for the feature.
 2. Paste or write the product requirement.
 3. Choose a strictness mode.
-4. Click Analyze.
-5. Read the score, issues, acceptance tests, and rewritten spec.
-6. Improve the requirement and run it again.
+4. Choose a project domain, such as general, fintech, health, e-commerce, or internal tooling.
+5. Turn on any risk overlays that matter, such as payments, PII, auth, public sharing, or high availability.
+6. Click Analyze.
+7. Read the score, issues, acceptance tests, and rewritten spec.
+8. Improve the requirement and run it again.
 
 There are three strictness modes:
 
 - Lenient: best for early ideas
 - Balanced: best for normal planning
 - Ruthless: best before handing the spec to engineers
+
+The domain setting helps SpecLint judge the stakes of the feature. For example, a missing permission rule is more serious in a fintech or payments flow than in a small internal dashboard. When SpecLint changes a warning because of this context, the issue shows a short note explaining why.
 
 ## Example
 
@@ -171,7 +176,7 @@ PATCH /api/decisions/{id}/reopen
 GET  /api/decisions/export
 ```
 
-Most users do not need to call these directly. The website uses them in the background to analyze specs, keep the accepted-risk log in sync, save requirement decisions, and mark older decisions as needing review when the spec text changes in a meaningful way.
+Most users do not need to call these directly. The website uses them in the background to analyze specs, apply the selected domain and risk overlays, keep the accepted-risk log in sync, save requirement decisions, and mark older decisions as needing review when the spec text changes in a meaningful way.
 
 ## Current Status
 

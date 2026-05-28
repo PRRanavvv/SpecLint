@@ -13,6 +13,22 @@ class Strictness(str, Enum):
     ruthless = "ruthless"
 
 
+class ProjectDomain(str, Enum):
+    general = "general"
+    fintech = "fintech"
+    health = "health"
+    ecommerce = "ecommerce"
+    internal_tooling = "internal_tooling"
+
+
+class RiskOverlay(str, Enum):
+    auth = "auth"
+    payments = "payments"
+    pii = "pii"
+    public_sharing = "public_sharing"
+    high_availability = "high_availability"
+
+
 class Severity(str, Enum):
     critical = "critical"
     high = "high"
@@ -50,17 +66,22 @@ class SpecAnalysisRequest(BaseModel):
     spec_text: str = Field(min_length=20, max_length=12000)
     source_spec_text: str | None = Field(default=None, max_length=12000)
     strictness: Strictness = Strictness.balanced
+    domain: ProjectDomain = ProjectDomain.general
+    risk_overlays: list[RiskOverlay] = Field(default_factory=list, max_length=5)
 
 
 class SpecIssue(BaseModel):
     id: str
     type: IssueType
     severity: Severity
+    base_severity: Severity | None = None
     title: str
     evidence: str
     why_it_matters: str
     suggestion: str
     test_prompt: str
+    context_note: str | None = None
+    context_multiplier: float | None = None
 
 
 class ScorePenalty(BaseModel):
@@ -74,6 +95,8 @@ class ScoreBreakdown(BaseModel):
     base_score: int = 100
     strictness: Strictness
     strictness_multiplier: float
+    domain: ProjectDomain = ProjectDomain.general
+    risk_overlays: list[RiskOverlay] = Field(default_factory=list)
     weights: dict[Severity, int]
     penalties: list[ScorePenalty] = Field(default_factory=list)
     total_penalty: float
@@ -118,12 +141,15 @@ class TraceItem(BaseModel):
 class SpecAnalysisResponse(BaseModel):
     spec_version_id: str | None = None
     title: str
+    domain: ProjectDomain = ProjectDomain.general
+    risk_overlays: list[RiskOverlay] = Field(default_factory=list)
     verdict: Literal["compiles", "compiles_with_warnings", "does_not_compile"]
     score: int = Field(ge=0, le=100)
     score_breakdown: ScoreBreakdown
     severity_counts: dict[Severity, int]
     category_docs: list[CategoryDoc]
     strictness_note: str
+    domain_note: str
     summary: str
     intent: ExtractedIntent
     issues: list[SpecIssue] = Field(default_factory=list)

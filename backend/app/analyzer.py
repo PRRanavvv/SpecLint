@@ -9,6 +9,8 @@ from .models import (
     EdgeCase,
     ExtractedIntent,
     IssueType,
+    ProjectDomain,
+    RiskOverlay,
     ScoreBreakdown,
     ScorePenalty,
     Severity,
@@ -17,6 +19,7 @@ from .models import (
     Strictness,
     TraceItem,
 )
+from .severity_config import adjusted_severity, calibration_for, domain_note
 from .text_utils import compact_quote, contains_any, split_sentences, stable_id, tokenize
 
 
@@ -384,7 +387,10 @@ def analyze_spec(
     spec_text: str,
     strictness: Strictness = Strictness.balanced,
     source_spec_text: str | None = None,
+    domain: ProjectDomain = ProjectDomain.general,
+    risk_overlays: list[RiskOverlay] | None = None,
 ) -> SpecAnalysisResponse:
+    overlays = risk_overlays or []
     _validate_spec_input(title, spec_text)
     sentences = split_sentences(spec_text)
     source_sentences = split_sentences(source_spec_text or spec_text)
@@ -392,21 +398,25 @@ def analyze_spec(
     _validate_extracted_intent(intent)
     primary_object = _primary_entity(intent, spec_text, title)
     issues = _collect_issues(title, spec_text, sentences, intent, strictness, primary_object)
+    issues = _apply_domain_context(issues, domain, overlays)
     edge_cases = _edge_cases(intent, issues, spec_text, title, primary_object)
     acceptance_tests = _acceptance_tests(title, intent, issues, sentences, primary_object)
     traceability = _traceability(source_sentences, issues, acceptance_tests)
-    score, score_breakdown = _score(issues, strictness)
+    score, score_breakdown = _score(issues, strictness, domain, overlays)
     verdict = _verdict(score, issues)
     summary = _summary(score, verdict, issues, intent, primary_object)
     rewritten_spec = _rewrite(title, intent, issues, edge_cases, acceptance_tests, primary_object)
     return SpecAnalysisResponse(
         title=title.strip() or "Untitled spec",
+        domain=domain,
+        risk_overlays=overlays,
         verdict=verdict,
         score=score,
         score_breakdown=score_breakdown,
         severity_counts=_severity_counts(issues),
         category_docs=CATEGORY_DOCS,
         strictness_note=STRICTNESS_NOTES[strictness],
+        domain_note=domain_note(domain, overlays),
         summary=summary,
         intent=intent,
         issues=issues,
@@ -1009,7 +1019,37 @@ def _rewrite(
     return "\n".join(lines)
 
 
-def _score(issues: list[SpecIssue], strictness: Strictness) -> tuple[int, ScoreBreakdown]:
+def _apply_domain_context(
+    issues: list[SpecIssue],
+    domain: ProjectDomain,
+    overlays: list[RiskOverlay],
+) -> list[SpecIssue]:
+    adjusted: list[SpecIssue] = []
+    for issue in issues:
+        calibration = calibration_for(issue.type, domain, overlays)
+        next_severity = adjusted_severity(issue.severity, calibration.multiplier)
+        if next_severity == issue.severity:
+            adjusted.append(issue)
+            continue
+        adjusted.append(
+            issue.model_copy(
+                update={
+                    "base_severity": issue.severity,
+                    "severity": next_severity,
+                    "context_note": calibration.reason,
+                    "context_multiplier": calibration.multiplier,
+                }
+            )
+        )
+    return _sort_issues(adjusted)
+
+
+def _score(
+    issues: list[SpecIssue],
+    strictness: Strictness,
+    domain: ProjectDomain,
+    overlays: list[RiskOverlay],
+) -> tuple[int, ScoreBreakdown]:
     multiplier = STRICTNESS_MULTIPLIERS[strictness]
     counts = _severity_counts(issues)
     penalties = [
@@ -1027,10 +1067,12 @@ def _score(issues: list[SpecIssue], strictness: Strictness) -> tuple[int, ScoreB
     breakdown = ScoreBreakdown(
         strictness=strictness,
         strictness_multiplier=multiplier,
+        domain=domain,
+        risk_overlays=overlays,
         weights=SEVERITY_WEIGHTS,
         penalties=penalties,
         total_penalty=total_penalty,
-        explanation="Score is out of 100: 100 minus severity-weighted issue penalties, adjusted by strictness.",
+        explanation="Score is out of 100: 100 minus severity-weighted issue penalties, adjusted by strictness and domain context.",
     )
     return score, breakdown
 
@@ -1090,8 +1132,12 @@ def _dedupe_issues(issues: list[SpecIssue]) -> list[SpecIssue]:
             continue
         seen.add(key)
         deduped.append(issue)
+    return _sort_issues(deduped)[:12]
+
+
+def _sort_issues(issues: list[SpecIssue]) -> list[SpecIssue]:
     severity_order = {Severity.critical: 0, Severity.high: 1, Severity.medium: 2, Severity.low: 3}
-    return sorted(deduped, key=lambda issue: (severity_order[issue.severity], issue.title))[:12]
+    return sorted(issues, key=lambda issue: (severity_order[issue.severity], issue.title))
 
 
 def _validate_spec_input(title: str, spec_text: str) -> None:

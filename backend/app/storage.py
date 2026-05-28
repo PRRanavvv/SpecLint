@@ -13,6 +13,8 @@ from .models import (
     DecisionCreateRequest,
     DecisionRecord,
     DecisionStatus,
+    ProjectDomain,
+    RiskOverlay,
     SpecAnalysisResponse,
     Strictness,
     ReviewResolutionRequest,
@@ -50,6 +52,8 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             spec_text TEXT NOT NULL,
             spec_hash TEXT NOT NULL,
             strictness TEXT NOT NULL,
+            domain TEXT NOT NULL DEFAULT 'general',
+            risk_overlays_json TEXT NOT NULL DEFAULT '[]',
             score INTEGER NOT NULL,
             verdict TEXT NOT NULL,
             issues_json TEXT NOT NULL,
@@ -124,6 +128,8 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             ON decisions (spec_version_id, issue_id);
         """
     )
+    _ensure_column(connection, "spec_versions", "domain", "TEXT NOT NULL DEFAULT 'general'")
+    _ensure_column(connection, "spec_versions", "risk_overlays_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(connection, "suppressions", "raw_evidence_hash", "TEXT")
     _ensure_column(connection, "suppressions", "normalized_evidence_hash", "TEXT")
     _ensure_column(connection, "decisions", "raw_evidence_hash", "TEXT")
@@ -151,9 +157,19 @@ def save_spec_version(
     title: str,
     spec_text: str,
     strictness: Strictness,
+    domain: ProjectDomain,
+    risk_overlays: list[RiskOverlay],
 ) -> str:
     spec_hash = _hash_text(spec_text)
-    spec_version_id = stable_id("spec", title.strip() or "Untitled spec", strictness, spec_hash)
+    overlay_key = ",".join(sorted(overlay.value for overlay in risk_overlays))
+    spec_version_id = stable_id(
+        "spec",
+        title.strip() or "Untitled spec",
+        strictness.value,
+        domain.value,
+        overlay_key,
+        spec_hash,
+    )
     now = _now()
     with _connect() as connection:
         connection.execute(
@@ -164,6 +180,8 @@ def save_spec_version(
                 spec_text,
                 spec_hash,
                 strictness,
+                domain,
+                risk_overlays_json,
                 score,
                 verdict,
                 issues_json,
@@ -171,7 +189,7 @@ def save_spec_version(
                 rewritten_spec,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 spec_version_id,
@@ -179,6 +197,8 @@ def save_spec_version(
                 spec_text,
                 spec_hash,
                 strictness.value,
+                domain.value,
+                json.dumps([overlay.value for overlay in risk_overlays]),
                 report.score,
                 report.verdict,
                 json.dumps([issue.model_dump(mode="json") for issue in report.issues]),

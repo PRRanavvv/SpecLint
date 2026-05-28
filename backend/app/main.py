@@ -117,12 +117,16 @@ def analyze(request: SpecAnalysisRequest) -> SpecAnalysisResponse:
             spec_text=request.spec_text,
             source_spec_text=request.source_spec_text,
             strictness=request.strictness,
+            domain=request.domain,
+            risk_overlays=request.risk_overlays,
         )
         report.spec_version_id = save_spec_version(
             report,
             title=request.title,
             spec_text=request.spec_text,
             strictness=request.strictness,
+            domain=request.domain,
+            risk_overlays=request.risk_overlays,
         )
         return report
     except SpecInputError as exc:

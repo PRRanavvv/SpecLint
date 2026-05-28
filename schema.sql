@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS spec_versions (
     spec_text TEXT NOT NULL,
     spec_hash TEXT NOT NULL,
     strictness TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT 'general',
+    risk_overlays_json TEXT NOT NULL DEFAULT '[]',
     score INTEGER NOT NULL,
     verdict TEXT NOT NULL,
     issues_json TEXT NOT NULL,

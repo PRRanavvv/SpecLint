@@ -11,7 +11,7 @@ os.environ["SPECLINT_DB_PATH"] = test_db.name
 
 from backend.app.analyzer import SpecInputError, analyze_spec
 from backend.app.main import app
-from backend.app.models import Strictness
+from backend.app.models import ProjectDomain, RiskOverlay, Strictness
 
 
 class SpecLintTests(unittest.TestCase):
@@ -43,9 +43,52 @@ class SpecLintTests(unittest.TestCase):
         self.assertIn("score", payload)
         self.assertIn("spec_version_id", payload)
         self.assertEqual(payload["score_breakdown"]["base_score"], 100)
+        self.assertEqual(payload["domain"], "general")
         self.assertIn("severity_counts", payload)
         self.assertTrue(payload["issues"])
         self.assertTrue(payload["rewritten_spec"])
+
+    def test_domain_context_adjusts_scoring_and_explains_severity_change(self):
+        spec_text = (
+            "Users can export payment data quickly. "
+            "The export includes invoices and transaction history."
+        )
+        general = analyze_spec(
+            title="Payment exports",
+            spec_text=spec_text,
+            strictness=Strictness.balanced,
+        )
+        fintech = analyze_spec(
+            title="Payment exports",
+            spec_text=spec_text,
+            strictness=Strictness.balanced,
+            domain=ProjectDomain.fintech,
+            risk_overlays=[RiskOverlay.payments],
+        )
+
+        self.assertLess(fintech.score, general.score)
+        self.assertIn(RiskOverlay.payments, fintech.risk_overlays)
+        adjusted_issue = next(issue for issue in fintech.issues if issue.base_severity)
+        self.assertIsNotNone(adjusted_issue.context_note)
+        self.assertIn("payments", adjusted_issue.context_note.lower())
+        self.assertGreater(adjusted_issue.context_multiplier, 1)
+
+    def test_internal_tooling_softens_low_stakes_wording(self):
+        spec_text = (
+            "Admins can update a dashboard note. "
+            "The editor should be simple and easy."
+        )
+        general = analyze_spec(title="Dashboard notes", spec_text=spec_text)
+        internal = analyze_spec(
+            title="Dashboard notes",
+            spec_text=spec_text,
+            domain=ProjectDomain.internal_tooling,
+        )
+
+        self.assertGreater(internal.score, general.score)
+        softened_issue = next(issue for issue in internal.issues if issue.base_severity)
+        self.assertEqual(softened_issue.type.value, "unverifiable_claim")
+        self.assertEqual(softened_issue.context_note, "Softened for internal tooling domain.")
 
     def test_suppression_decision_log_can_accept_and_reopen_risk(self):
         client = TestClient(app)

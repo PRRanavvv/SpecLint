@@ -82,6 +82,8 @@ const els = {
   clearButton: document.querySelector("#clearButton"),
   exampleSelect: document.querySelector("#exampleSelect"),
   strictnessSelect: document.querySelector("#strictnessSelect"),
+  domainSelect: document.querySelector("#domainSelect"),
+  riskOverlayInputs: document.querySelectorAll("[name='riskOverlay']"),
   strictnessHelp: document.querySelector("#strictnessHelp"),
   scoreValue: document.querySelector("#scoreValue"),
   scoreLabel: document.querySelector("#scoreLabel"),
@@ -390,6 +392,24 @@ function tags(items, empty = "None detected") {
   return items.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("");
 }
 
+function selectedRiskOverlays() {
+  return [...els.riskOverlayInputs].filter((input) => input.checked).map((input) => input.value);
+}
+
+function currentModeCopy() {
+  const domain = humanize(els.domainSelect?.value || "general");
+  const overlays = selectedRiskOverlays();
+  const overlayText = overlays.length ? ` Risk overlays: ${overlays.map(humanize).join(", ")}.` : " No risk overlays selected.";
+  return `${strictnessCopy[els.strictnessSelect.value]} Domain: ${domain}.${overlayText}`;
+}
+
+function setRiskOverlays(overlays = []) {
+  const selected = new Set(overlays);
+  els.riskOverlayInputs.forEach((input) => {
+    input.checked = selected.has(input.value);
+  });
+}
+
 async function loadExamples() {
   state.examples = await api("/api/examples");
   els.exampleSelect.innerHTML =
@@ -425,6 +445,8 @@ async function analyze({ recordHistory = true } = {}) {
         spec_text: specText,
         source_spec_text: state.sourceSpecText,
         strictness: els.strictnessSelect.value,
+        domain: els.domainSelect.value,
+        risk_overlays: selectedRiskOverlays(),
       }),
     });
     state.report = report;
@@ -507,7 +529,12 @@ function renderReport() {
   els.scoreLabel.textContent = `${verdictLabel(report.verdict)} out of 100`;
   els.verdictText.textContent = `${report.score} / 100 - ${verdictLabel(report.verdict)}`;
   els.summaryText.textContent = report.summary;
-  els.strictnessHelp.textContent = report.strictness_note || strictnessCopy[els.strictnessSelect.value];
+  els.strictnessHelp.textContent = [
+    report.strictness_note || strictnessCopy[els.strictnessSelect.value],
+    report.domain_note,
+  ]
+    .filter(Boolean)
+    .join(" ");
   renderSeverityCounts(severityCountsForIssues(visibleIssues));
   renderRubric(report.score_breakdown);
   renderIntent(report.intent);
@@ -528,7 +555,7 @@ function renderInputRejected() {
   els.verdictText.textContent = "IMPROPER INPUT";
   els.summaryText.textContent = "Write a real product requirement before running SpecLint.";
   els.rubricText.textContent = "No score generated. This input was rejected before analysis.";
-  els.strictnessHelp.textContent = strictnessCopy[els.strictnessSelect.value];
+  els.strictnessHelp.textContent = currentModeCopy();
   els.intentNarrative.className = "intent-narrative empty-state";
   els.intentNarrative.textContent = "No intent extracted.";
   els.intentGrid.className = "intent-grid empty-state";
@@ -637,7 +664,13 @@ function issueMarkupFor(issue) {
           <div class="issue-topline">
             <div class="tag-row">
               <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
+              ${
+                issue.base_severity
+                  ? `<span class="tag context-tag">${humanize(issue.base_severity)} -> ${humanize(issue.severity)}</span>`
+                  : ""
+              }
               <span class="tag">${humanize(issue.type)}</span>
+              ${issue.context_note ? `<span class="tag context-tag">${escapeHtml(issue.context_note)}</span>` : ""}
             </div>
             <div class="issue-actions">
               <button class="ghost-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Fix</button>
@@ -749,6 +782,11 @@ function pendingReviewMarkup(records) {
               <div class="issue-topline">
                 <div class="tag-row">
                   <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
+                  ${
+                    issue.base_severity
+                      ? `<span class="tag context-tag">${humanize(issue.base_severity)} -> ${humanize(issue.severity)}</span>`
+                      : ""
+                  }
                   <span class="tag">${humanize(issue.type)}</span>
                   <span class="tag">Needs review</span>
                   <span class="tag">${kind === "decision" ? "Decision" : "Accepted risk"}</span>
@@ -793,6 +831,11 @@ function acceptedRiskMarkup(records) {
               <div class="issue-topline">
                 <div class="tag-row">
                   <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
+                  ${
+                    issue.base_severity
+                      ? `<span class="tag context-tag">${humanize(issue.base_severity)} -> ${humanize(issue.severity)}</span>`
+                      : ""
+                  }
                   <span class="tag">${humanize(issue.type)}</span>
                   <span class="tag">Accepted risk</span>
                 </div>
@@ -833,6 +876,11 @@ function decisionMarkup(records) {
               <div class="issue-topline">
                 <div class="tag-row">
                   <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
+                  ${
+                    issue.base_severity
+                      ? `<span class="tag context-tag">${humanize(issue.base_severity)} -> ${humanize(issue.severity)}</span>`
+                      : ""
+                  }
                   <span class="tag">${humanize(issue.type)}</span>
                   <span class="tag">Decided</span>
                 </div>
@@ -1303,6 +1351,8 @@ async function copyShareLink() {
     title: els.titleInput.value,
     spec: els.specInput.value,
     strictness: els.strictnessSelect.value,
+    domain: els.domainSelect.value,
+    riskOverlays: selectedRiskOverlays(),
   };
   const hash = encodeURIComponent(JSON.stringify(payload));
   const url = `${location.origin}${location.pathname}#spec=${hash}`;
@@ -1319,7 +1369,9 @@ function loadFromHash() {
     els.specInput.value = payload.spec || "";
     state.sourceSpecText = payload.spec || null;
     els.strictnessSelect.value = payload.strictness || "balanced";
-    els.strictnessHelp.textContent = strictnessCopy[els.strictnessSelect.value];
+    els.domainSelect.value = payload.domain || "general";
+    setRiskOverlays(payload.riskOverlays || payload.risk_overlays || []);
+    els.strictnessHelp.textContent = currentModeCopy();
     return Boolean(payload.spec);
   } catch {
     return false;
@@ -1343,7 +1395,17 @@ els.clearButton.addEventListener("click", () => {
 });
 
 els.strictnessSelect.addEventListener("change", () => {
-  els.strictnessHelp.textContent = strictnessCopy[els.strictnessSelect.value];
+  els.strictnessHelp.textContent = currentModeCopy();
+});
+
+els.domainSelect?.addEventListener("change", () => {
+  els.strictnessHelp.textContent = currentModeCopy();
+});
+
+els.riskOverlayInputs.forEach((input) => {
+  input.addEventListener("change", () => {
+    els.strictnessHelp.textContent = currentModeCopy();
+  });
 });
 
 els.themeToggle?.addEventListener("click", () => {

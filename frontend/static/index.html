@@ -73,6 +73,13 @@
               <option value="lenient">Lenient</option>
               <option value="ruthless">Ruthless</option>
             </select>
+            <select id="domainSelect" aria-label="Project domain">
+              <option value="general">General</option>
+              <option value="fintech">Fintech</option>
+              <option value="health">Health</option>
+              <option value="ecommerce">E-commerce</option>
+              <option value="internal_tooling">Internal tooling</option>
+            </select>
           </div>
         </header>
 
@@ -112,6 +119,16 @@
                 <span>Title</span>
                 <input id="titleInput" maxlength="140" value="Transfer workspace ownership" />
               </label>
+              <fieldset class="overlay-fieldset">
+                <legend>Risk overlays</legend>
+                <div class="overlay-options">
+                  <label><input type="checkbox" name="riskOverlay" value="auth" /> Auth</label>
+                  <label><input type="checkbox" name="riskOverlay" value="payments" /> Payments</label>
+                  <label><input type="checkbox" name="riskOverlay" value="pii" /> PII</label>
+                  <label><input type="checkbox" name="riskOverlay" value="public_sharing" /> Public sharing</label>
+                  <label><input type="checkbox" name="riskOverlay" value="high_availability" /> High availability</label>
+                </div>
+              </fieldset>
               <label>
                 <span>Requirement</span>
                 <textarea id="specInput" minlength="20" maxlength="12000" rows="14" placeholder="Example: Workspace admins can transfer ownership to another member. The current owner must confirm the transfer and the new owner gets notified.">Workspace admins can transfer ownership to another member. The current owner should confirm the transfer and the new owner gets notified. The transfer should be simple and safe.</textarea>
