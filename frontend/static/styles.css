@@ -1,17 +1,16 @@
 @font-face {
-  font-family: "Inter";
+  font-family: "IBM Plex Sans";
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
   src:
-    local("Inter"),
-    local("Inter Variable"),
-    local("InterVariable");
+    local("IBM Plex Sans"),
+    local("IBMPlexSans");
 }
 
 :root {
   color-scheme: light;
-  --font-main: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-main: "IBM Plex Sans", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --quiet-champagne: #f7e6ca;
   --quiet-gold: #e8d59e;
@@ -25,6 +24,12 @@
   --surface-soft-color: #efe0c7;
   --accent-color: #7a6758;
   --accent-strong-color: #5f5045;
+  --cta-bg: #4f7478;
+  --cta-bg-hover: #416367;
+  --cta-ink: #fff8eb;
+  --score-low: #9f4e4a;
+  --score-medium: #b98635;
+  --score-high: #3f8f86;
   --danger-color: #9f4e4a;
   --warning-color: #9a7432;
   --info-color: var(--quiet-taupe);
@@ -98,6 +103,12 @@
   --warning-color: var(--quiet-gold);
   --info-color: var(--quiet-taupe);
   --success-color: var(--quiet-gold);
+  --cta-bg: #8ebfc0;
+  --cta-bg-hover: #a4d2d3;
+  --cta-ink: #211a16;
+  --score-low: #d98982;
+  --score-medium: #e8d59e;
+  --score-high: #78c8bd;
   --on-accent-color: #211a16;
   --charcoal: #17110f;
   --sidebar-bg: #17110f;
@@ -542,17 +553,31 @@ textarea:focus {
 }
 
 .primary {
-  background: var(--green);
-  color: var(--sidebar-text);
+  background: var(--cta-bg);
+  color: var(--cta-ink);
 }
 
 .primary:hover {
-  background: var(--green-strong);
+  background: var(--cta-bg-hover);
 }
 
 .ghost-button {
   background: var(--control-bg);
   color: var(--ink);
+}
+
+.cta-button {
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 8px;
+  background: var(--cta-bg);
+  color: var(--cta-ink);
+  font-weight: 900;
+  transition: var(--theme-transition);
+}
+
+.cta-button:hover {
+  background: var(--cta-bg-hover);
 }
 
 .ghost-button.active {
@@ -561,7 +586,8 @@ textarea:focus {
 }
 
 .primary.compact,
-.ghost-button.compact {
+.ghost-button.compact,
+.cta-button.compact {
   min-height: 34px;
   padding: 0 11px;
   font-size: 12px;
@@ -589,6 +615,55 @@ textarea:focus {
 .hero-band p:last-child {
   color: var(--copy);
   line-height: 1.5;
+}
+
+.score-progress {
+  display: block;
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--control-bg);
+  appearance: none;
+  transition: var(--theme-transition);
+}
+
+.score-progress::-webkit-progress-bar {
+  border-radius: inherit;
+  background: var(--control-bg);
+}
+
+.score-progress::-webkit-progress-value {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--score-low);
+  transition:
+    inline-size 0.35s ease,
+    background-color 0.3s ease;
+}
+
+.score-progress::-moz-progress-bar {
+  border-radius: inherit;
+  background: var(--score-low);
+  transition: background-color 0.3s ease;
+}
+
+.score-progress[data-status="medium"]::-webkit-progress-value {
+  background: var(--score-medium);
+}
+
+.score-progress[data-status="medium"]::-moz-progress-bar {
+  background: var(--score-medium);
+}
+
+.score-progress[data-status="high"]::-webkit-progress-value {
+  background: var(--score-high);
+}
+
+.score-progress[data-status="high"]::-moz-progress-bar {
+  background: var(--score-high);
 }
 
 .rubric-strip {

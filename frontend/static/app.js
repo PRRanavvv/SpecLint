@@ -87,6 +87,7 @@ const els = {
   strictnessHelp: document.querySelector("#strictnessHelp"),
   scoreValue: document.querySelector("#scoreValue"),
   scoreLabel: document.querySelector("#scoreLabel"),
+  scoreProgress: document.querySelector("#scoreProgress"),
   criticalCount: document.querySelector("#criticalCount"),
   highCount: document.querySelector("#highCount"),
   mediumCount: document.querySelector("#mediumCount"),
@@ -529,6 +530,7 @@ function renderReport() {
   els.scoreLabel.textContent = `${verdictLabel(report.verdict)} out of 100`;
   els.verdictText.textContent = `${report.score} / 100 - ${verdictLabel(report.verdict)}`;
   els.summaryText.textContent = report.summary;
+  updateScoreProgress(report.score);
   els.strictnessHelp.textContent = [
     report.strictness_note || strictnessCopy[els.strictnessSelect.value],
     report.domain_note,
@@ -554,6 +556,7 @@ function renderInputRejected() {
   els.scoreLabel.textContent = "Improper input";
   els.verdictText.textContent = "IMPROPER INPUT";
   els.summaryText.textContent = "Write a real product requirement before running SpecLint.";
+  updateScoreProgress(0);
   els.rubricText.textContent = "No score generated. This input was rejected before analysis.";
   els.strictnessHelp.textContent = currentModeCopy();
   els.intentNarrative.className = "intent-narrative empty-state";
@@ -579,6 +582,22 @@ function renderSeverityCounts(counts = {}) {
   els.highCount.textContent = counts.high || 0;
   els.mediumCount.textContent = counts.medium || 0;
   els.lowCount.textContent = counts.low || 0;
+}
+
+function scoreStatus(score) {
+  if (score < 50) return "low";
+  if (score <= 80) return "medium";
+  return "high";
+}
+
+function updateScoreProgress(score = 0) {
+  const safeScore = Math.max(0, Math.min(100, Number(score) || 0));
+  const status = scoreStatus(safeScore);
+  if (els.scoreProgress) {
+    els.scoreProgress.value = safeScore;
+    els.scoreProgress.setAttribute("aria-valuenow", String(safeScore));
+    els.scoreProgress.setAttribute("data-status", status);
+  }
 }
 
 function renderRubric(breakdown) {
@@ -673,9 +692,9 @@ function issueMarkupFor(issue) {
               ${issue.context_note ? `<span class="tag context-tag">${escapeHtml(issue.context_note)}</span>` : ""}
             </div>
             <div class="issue-actions">
-              <button class="ghost-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Fix</button>
-              <button class="ghost-button compact decide-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Decide</button>
-              <button class="ghost-button compact suppress-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Accept</button>
+              <button class="cta-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Fix</button>
+              <button class="cta-button compact decide-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Decide</button>
+              <button class="cta-button compact suppress-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Accept</button>
             </div>
           </div>
           <h3>${escapeHtml(issue.title)}</h3>

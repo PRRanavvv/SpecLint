@@ -23,7 +23,9 @@ It can:
 - Save product decisions when a warning needs a team call
 - Let users accept a warning with an owner, reason, and expiry date
 - Store accepted risks in a backend decision log
+- Use evidence hashing to tell when an accepted risk needs review again
 - Tune warning severity by project domain and risk overlays
+- Show a score bar that makes the spec quality easy to scan
 - Support both light theme and dark theme
 
 The goal is not to replace thinking. The goal is to help catch weak spots before they become bugs later.
@@ -137,13 +139,17 @@ Expected response:
 
 SpecLint uses:
 
-- FastAPI for the backend
+- FastAPI for the backend API
+- SQL with SQLite for the local decision log
 - HTML, CSS, and JavaScript for the frontend
-- Python logic for analyzing requirements
-- SQLite for the decision log
+- Python rule logic for analyzing requirements
+- Evidence hashing to detect meaningful spec changes
+- Domain-aware severity rules for fintech, health, e-commerce, internal tooling, and risk overlays
 - Unit tests to check that the main features still work
 
 It does not need an API key or an online AI model for the current version. The analysis is built into the project.
+
+The interface uses a warm "Quiet luxury" color palette and IBM Plex Sans typography. The goal is to make the app feel calm and professional, not flashy, so product and engineering teams can focus on the warnings and decisions.
 
 ## Project Structure
 
@@ -182,4 +188,4 @@ Most users do not need to call these directly. The website uses them in the back
 
 SpecLint is an MVP, which means it is a working first version. It already gives useful feedback without needing any paid API. A future version could add an AI review step, but the current version is meant to stay simple, fast, and explainable.
 
-The decision log now keeps accepted risks and product decisions attached to spec versions. If only punctuation or casing changes, SpecLint keeps the decision active. If the actual evidence text changes, it marks that decision as `pending_review` so the owner can reconfirm it or reopen the warning.
+The decision log keeps accepted risks and product decisions attached to spec versions. If only punctuation or casing changes, SpecLint keeps the decision active. If the actual evidence text changes, it marks that decision as `pending_review` so the owner can reconfirm it or reopen the warning.
