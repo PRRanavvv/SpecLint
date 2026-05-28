@@ -16,12 +16,6 @@
         const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
         const theme = storedTheme || (prefersDark ? "dark" : "light");
         document.documentElement.dataset.theme = theme;
-        try {
-          const storedFont = localStorage.getItem("speclint-font");
-          document.documentElement.dataset.font = storedFont === "system" ? "system" : "inter";
-        } catch {
-          document.documentElement.dataset.font = "inter";
-        }
       })();
     </script>
     <link rel="stylesheet" href="/static/styles.css" />
@@ -70,10 +64,6 @@
               <span class="theme-toggle-orb" aria-hidden="true">
                 <span class="theme-toggle-icon"></span>
               </span>
-            </button>
-            <button id="fontToggle" class="font-toggle" type="button" aria-pressed="true" title="Switch interface font">
-              <span>Font</span>
-              <strong id="fontToggleLabel">Inter</strong>
             </button>
             <select id="exampleSelect" aria-label="Load example">
               <option value="">Examples</option>
