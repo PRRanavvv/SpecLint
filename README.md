@@ -149,7 +149,7 @@ SpecLint uses:
 
 It does not need an API key or an online AI model for the current version. The analysis is built into the project.
 
-The interface uses a warm "Quiet luxury" color palette and IBM Plex Sans typography. The goal is to make the app feel calm and professional, not flashy, so product and engineering teams can focus on the warnings and decisions.
+The interface uses a calm "Stone path" color palette and IBM Plex Sans typography. The goal is to make the app feel steady and professional, not flashy, so product and engineering teams can focus on the warnings and decisions.
 
 ## Project Structure
 
