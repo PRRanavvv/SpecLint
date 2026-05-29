@@ -10,9 +10,11 @@ const state = {
   suppressingIssueId: null,
   decidingIssueId: null,
   issueFilter: "action",
+  severityFilter: "all",
   rewriteView: "formatted",
   sourceSpecText: null,
   preserveSourceForNextRun: false,
+  analyzedSpecText: null,
   analysisRequestId: 0,
 };
 
@@ -139,13 +141,15 @@ const els = {
   strictnessHelp: document.querySelector("#strictnessHelp"),
   scoreValue: document.querySelector("#scoreValue"),
   scoreLabel: document.querySelector("#scoreLabel"),
+  scoreGauge: document.querySelector("#scoreGauge"),
   scoreProgress: document.querySelector("#scoreProgress"),
   criticalCount: document.querySelector("#criticalCount"),
   highCount: document.querySelector("#highCount"),
-  mediumCount: document.querySelector("#mediumCount"),
-  lowCount: document.querySelector("#lowCount"),
+  severityToggles: document.querySelectorAll("[data-severity-filter]"),
   verdictText: document.querySelector("#verdictText"),
   summaryText: document.querySelector("#summaryText"),
+  pipelineState: document.querySelector("#pipelineState"),
+  pipelineSteps: document.querySelectorAll("[data-pipeline-step]"),
   rubricText: document.querySelector("#rubricText"),
   intentNarrative: document.querySelector("#intentNarrative"),
   intentGrid: document.querySelector("#intentGrid"),
@@ -482,9 +486,15 @@ function isFastTrackIssue(issue, overlays = selectedRiskOverlays()) {
   return fastTrackSeverities.has(issue.severity) && isOverlayRelevantIssue(issue, overlays);
 }
 
-function fastTrackOpenIssues(issues = []) {
+function fastTrackCandidates(issues = []) {
   const overlays = selectedRiskOverlays();
   return openIssues(issues).filter((issue) => isFastTrackIssue(issue, overlays));
+}
+
+function fastTrackOpenIssues(issues = [], { respectSeverityFilter = true } = {}) {
+  const candidates = fastTrackCandidates(issues);
+  if (!respectSeverityFilter || state.severityFilter === "all") return candidates;
+  return candidates.filter((issue) => issue.severity === state.severityFilter);
 }
 
 function firstMinorRisk(issues = []) {
@@ -499,6 +509,50 @@ function firstMinorRisk(issues = []) {
 function syncOverlayToggleState() {
   els.riskOverlayInputs.forEach((input) => {
     input.closest(".overlay-toggle")?.classList.toggle("active", input.checked);
+  });
+}
+
+function currentSpecText() {
+  return els.specInput.value.trim();
+}
+
+function isReportStale() {
+  return Boolean(state.report && state.analyzedSpecText !== currentSpecText());
+}
+
+function isUsingRewrite() {
+  const specText = currentSpecText();
+  const generatedDraft = specText.startsWith("# ") && specText.includes("Primary actor:") && specText.includes("Acceptance criteria:");
+  return Boolean(state.report?.rewritten_spec && (specText === state.report.rewritten_spec.trim() || generatedDraft));
+}
+
+function workflowState() {
+  if (document.body.classList.contains("is-analyzing")) return "diagnose";
+  if (!state.report || isReportStale()) return "draft";
+  if (!isUsingRewrite()) return "tighten";
+  return "finalize";
+}
+
+function workflowCopy(step = workflowState()) {
+  return {
+    draft: { label: "Analyze", state: "Drafting" },
+    diagnose: { label: "Analyzing", state: "Analyzing" },
+    tighten: { label: "Tighten Specs", state: "Ready to tighten" },
+    finalize: { label: "Finalize & Save", state: "Ready to save" },
+  }[step];
+}
+
+function updateWorkflowUi() {
+  const step = workflowState();
+  const copy = workflowCopy(step);
+  if (els.analyzeButton) {
+    els.analyzeButton.textContent = copy.label;
+    els.analyzeButton.dataset.workflowAction = step;
+  }
+  if (els.pipelineState) els.pipelineState.textContent = copy.state;
+  els.pipelineSteps.forEach((item) => {
+    const active = item.dataset.pipelineStep === step;
+    item.classList.toggle("active", active);
   });
 }
 
@@ -531,7 +585,20 @@ function setAnalyzing(isAnalyzing) {
   document.body.classList.toggle("focus-mode", false);
   els.heroBand?.setAttribute("aria-busy", String(isAnalyzing));
   els.analyzeButton.disabled = isAnalyzing;
-  els.analyzeButton.textContent = isAnalyzing ? "Analyzing" : "Analyze";
+  updateWorkflowUi();
+}
+
+function runPrimaryAction() {
+  const step = workflowState();
+  if (step === "tighten") {
+    useRewrite({ rerun: true });
+    return;
+  }
+  if (step === "finalize") {
+    downloadMarkdown();
+    return;
+  }
+  analyze().catch((error) => toast(error.message));
 }
 
 function focusDiagnostics() {
@@ -583,6 +650,7 @@ async function analyze({ recordHistory = true, focusResult = true } = {}) {
     await hydrateDecisions(report);
     if (requestId !== state.analysisRequestId) return;
     if (recordHistory) addHistory(report, snapshot.specText);
+    state.analyzedSpecText = snapshot.specText;
     renderReport();
     if (focusResult) focusDiagnostics();
   } catch (error) {
@@ -647,7 +715,7 @@ function addHistory(report, specText) {
     title: report.title,
     score: report.score,
     verdict: report.verdict,
-    issueCount: fastTrackOpenIssues(report.issues).length,
+    issueCount: fastTrackOpenIssues(report.issues, { respectSeverityFilter: false }).length,
     delta: previous ? report.score - previous.score : 0,
     specText,
     at: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -658,9 +726,9 @@ function addHistory(report, specText) {
 function renderReport() {
   const report = state.report;
   if (!report) return;
-  const visibleIssues = fastTrackOpenIssues(report.issues);
+  const visibleIssues = fastTrackOpenIssues(report.issues, { respectSeverityFilter: false });
   els.scoreValue.textContent = report.score;
-  els.scoreLabel.textContent = `${verdictLabel(report.verdict)} out of 100`;
+  els.scoreLabel.textContent = "Build health";
   els.verdictText.textContent = `${report.score} / 100 - ${verdictLabel(report.verdict)}`;
   els.summaryText.textContent = report.summary;
   updateScoreProgress(report.score);
@@ -674,14 +742,16 @@ function renderReport() {
   renderTrace(report.traceability);
   renderRewrite();
   renderHistory();
+  updateWorkflowUi();
 }
 
 function renderInputRejected() {
   state.report = null;
   state.suppressingIssueId = null;
   state.decidingIssueId = null;
+  state.analyzedSpecText = null;
   els.scoreValue.textContent = "--";
-  els.scoreLabel.textContent = "Improper input";
+  els.scoreLabel.textContent = "Build health";
   els.verdictText.textContent = "IMPROPER INPUT";
   els.summaryText.textContent = "Write a real product requirement before running SpecLint.";
   updateScoreProgress(0);
@@ -703,13 +773,13 @@ function renderInputRejected() {
   state.history = [];
   renderHistory();
   renderSeverityCounts({});
+  updateWorkflowUi();
 }
 
 function renderSeverityCounts(counts = {}) {
   els.criticalCount.textContent = counts.critical || 0;
   els.highCount.textContent = counts.high || 0;
-  els.mediumCount.textContent = counts.medium || 0;
-  els.lowCount.textContent = counts.low || 0;
+  renderSeverityFilterState();
 }
 
 function scoreStatus(score) {
@@ -725,6 +795,10 @@ function updateScoreProgress(score = 0) {
     els.scoreProgress.value = safeScore;
     els.scoreProgress.setAttribute("aria-valuenow", String(safeScore));
     els.scoreProgress.setAttribute("data-status", status);
+  }
+  if (els.scoreGauge) {
+    els.scoreGauge.style.setProperty("--score-angle", `${safeScore * 3.6}deg`);
+    els.scoreGauge.setAttribute("data-status", status);
   }
 }
 
@@ -773,15 +847,22 @@ function renderIntent(intent) {
 
 function renderIssues(issues) {
   const visibleIssues = fastTrackOpenIssues(issues);
+  const fastTrackTotal = fastTrackOpenIssues(issues, { respectSeverityFilter: false });
   const acceptedRisks = acceptedRiskRecords(issues);
   const decisions = decisionRecords(issues);
   const pendingReviews = pendingReviewRecords(issues);
   const acceptedCount = acceptedRisks.length;
   renderIssueFilterState();
-  els.issueCount.textContent = `${visibleIssues.length} blocker${visibleIssues.length === 1 ? "" : "s"}${pendingReviews.length ? ` + ${pendingReviews.length} review` : ""}${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
+  const focusLabel = state.severityFilter === "all" ? "" : ` ${state.severityFilter}`;
+  els.issueCount.textContent = `${visibleIssues.length}${focusLabel} blocker${visibleIssues.length === 1 ? "" : "s"}${pendingReviews.length ? ` + ${pendingReviews.length} review` : ""}${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
   if (!issues.length) {
     els.issuesList.className = "issue-list empty-state";
     els.issuesList.textContent = "No lint issues found.";
+    return;
+  }
+  if (!visibleIssues.length && state.issueFilter === "action" && fastTrackTotal.length && state.severityFilter !== "all") {
+    els.issuesList.className = "issue-list";
+    els.issuesList.innerHTML = `<article class="issue-item fast-track-good">No ${escapeHtml(state.severityFilter)} blockers in this view.</article>`;
     return;
   }
   if (!visibleIssues.length && state.issueFilter === "action") {
@@ -895,6 +976,14 @@ function issueMarkupFor(issue) {
 function renderIssueFilterState() {
   els.issueFilters.forEach((button) => {
     const active = button.dataset.issueFilter === state.issueFilter;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
+function renderSeverityFilterState() {
+  els.severityToggles.forEach((button) => {
+    const active = button.dataset.severityFilter === state.severityFilter;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
@@ -1448,6 +1537,7 @@ function useRewrite({ rerun = false } = {}) {
   els.specInput.value = state.report.rewritten_spec;
   els.titleInput.value = state.report.title;
   toast(rerun ? "Using rewrite and re-running." : "Rewrite moved into the editor.");
+  updateWorkflowUi();
   if (rerun) analyze().catch((error) => toast(error.message));
 }
 
@@ -1529,17 +1619,20 @@ function loadFromHash() {
 
 els.specForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  analyze().catch((error) => toast(error.message));
+  runPrimaryAction();
 });
 
 els.analyzeButton.addEventListener("click", () => {
-  analyze().catch((error) => toast(error.message));
+  runPrimaryAction();
 });
 
 els.clearButton.addEventListener("click", () => {
   els.specInput.value = "";
+  state.report = null;
   state.sourceSpecText = null;
   state.preserveSourceForNextRun = false;
+  state.analyzedSpecText = null;
+  updateWorkflowUi();
   els.specInput.focus();
 });
 
@@ -1565,6 +1658,7 @@ els.specInput.addEventListener("focus", () => {
 
 els.specInput.addEventListener("input", () => {
   if (document.activeElement === els.specInput) document.body.classList.add("focus-mode");
+  updateWorkflowUi();
 });
 
 els.specInput.addEventListener("blur", () => {
@@ -1578,6 +1672,16 @@ els.themeToggle?.addEventListener("click", () => {
 els.issueFilters.forEach((button) => {
   button.addEventListener("click", () => {
     state.issueFilter = button.dataset.issueFilter || "action";
+    renderReport();
+  });
+});
+
+els.severityToggles.forEach((button) => {
+  button.addEventListener("click", () => {
+    const nextFilter = button.dataset.severityFilter || "all";
+    state.severityFilter = state.severityFilter === nextFilter ? "all" : nextFilter;
+    if (state.issueFilter !== "action") state.issueFilter = "action";
+    renderSeverityFilterState();
     renderReport();
   });
 });
@@ -1686,6 +1790,8 @@ els.historyList.addEventListener("click", (event) => {
 const storedTheme = getStoredTheme();
 setTheme(storedTheme || currentTheme() || systemTheme(), { persist: Boolean(storedTheme) });
 syncOverlayToggleState();
+renderSeverityFilterState();
+updateWorkflowUi();
 
 const themePreference = window.matchMedia?.("(prefers-color-scheme: dark)");
 themePreference?.addEventListener?.("change", (event) => {

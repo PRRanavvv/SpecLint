@@ -18,7 +18,7 @@
         document.documentElement.dataset.theme = theme;
       })();
     </script>
-    <link rel="stylesheet" href="/static/styles.css?v=fast-track-mvp" />
+    <link rel="stylesheet" href="/static/styles.css?v=flow-dashboard" />
   </head>
   <body>
     <div class="app-shell">
@@ -30,21 +30,20 @@
             <span>Intent compiler</span>
           </div>
         </div>
-        <div class="review-flow" aria-label="Review flow">
-          <span>1. Draft</span>
-          <span>2. Diagnose</span>
-          <span>3. Tighten</span>
-          <span>4. Re-run</span>
-        </div>
-        <div class="score-card">
-          <span id="scoreValue">--</span>
-          <small id="scoreLabel">No report</small>
-        </div>
-        <div class="legend">
-          <span><i class="critical"></i> Critical <b id="criticalCount">0</b></span>
-          <span><i class="high"></i> High <b id="highCount">0</b></span>
-          <span><i class="medium"></i> Medium <b id="mediumCount">0</b></span>
-          <span><i class="low"></i> Low <b id="lowCount">0</b></span>
+        <div class="sidebar-dashboard" aria-label="Diagnostic focus">
+          <div class="dashboard-kicker">Focus</div>
+          <div class="severity-toggles" aria-label="Severity filters">
+            <button class="severity-toggle" type="button" data-severity-filter="critical">
+              <i class="critical"></i>
+              <span>Critical</span>
+              <b id="criticalCount">0</b>
+            </button>
+            <button class="severity-toggle" type="button" data-severity-filter="high">
+              <i class="high"></i>
+              <span>High</span>
+              <b id="highCount">0</b>
+            </button>
+          </div>
         </div>
         <footer class="tiny-footer">
           <span class="creator-mark" aria-hidden="true">PR</span>
@@ -57,8 +56,22 @@
           <div>
             <p class="eyebrow">Product requirements</p>
             <h1>Compile vague specs before they become bugs.</h1>
+            <div class="pipeline-bar" aria-label="Workflow state">
+              <span class="pipeline-step active" data-pipeline-step="draft">Draft</span>
+              <span class="pipeline-step" data-pipeline-step="diagnose">Diagnose</span>
+              <span class="pipeline-step" data-pipeline-step="tighten">Tighten</span>
+              <span class="pipeline-step" data-pipeline-step="finalize">Finalize</span>
+              <strong id="pipelineState">Drafting</strong>
+            </div>
           </div>
           <div class="top-actions">
+            <div class="action-cluster">
+              <div class="score-gauge" id="scoreGauge" aria-label="Build health">
+                <span id="scoreValue">--</span>
+                <small id="scoreLabel">Build health</small>
+              </div>
+              <button id="analyzeButton" class="primary action-button" type="button">Analyze</button>
+            </div>
             <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" title="Switch to dark mode">
               <span id="themeToggleLabel" class="theme-toggle-label">Day mode</span>
               <span class="theme-toggle-orb" aria-hidden="true">
@@ -118,7 +131,6 @@
                 <h2>Spec</h2>
               </div>
               <div class="button-row">
-                <button id="analyzeButton" class="primary" type="button">Analyze</button>
                 <button id="clearButton" class="ghost-button" type="button">Clear</button>
               </div>
             </div>
@@ -144,35 +156,35 @@
             </form>
           </section>
 
-          <section class="panel intent-panel" aria-label="Extracted intent">
+          <section id="issues" class="panel report-panel diagnostic-container" aria-label="Lint issues">
             <div class="panel-header">
               <div>
-                <p class="eyebrow">Parsed intent</p>
-                <h2>Entities, actions, rules</h2>
+                <p class="eyebrow">Diagnostics</p>
+                <h2>Lint issues</h2>
+              </div>
+              <div class="issue-header-actions">
+                <div class="issue-filters" aria-label="Issue filter">
+                  <button class="issue-filter active" type="button" data-issue-filter="action">Action required</button>
+                  <button class="issue-filter" type="button" data-issue-filter="review">Needs review</button>
+                  <button class="issue-filter" type="button" data-issue-filter="all">All</button>
+                  <button class="issue-filter" type="button" data-issue-filter="accepted">Accepted risks</button>
+                </div>
+                <span id="issueCount" class="count-pill">0 issues</span>
               </div>
             </div>
-            <p id="intentNarrative" class="intent-narrative empty-state">No intent extracted yet.</p>
-            <div id="intentGrid" class="intent-grid empty-state">No intent extracted yet.</div>
+            <div id="issuesList" class="issue-list empty-state">No issues yet.</div>
           </section>
         </div>
 
-        <section id="issues" class="panel report-panel diagnostic-container" aria-label="Lint issues">
+        <section class="panel intent-panel" aria-label="Extracted intent">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">Diagnostics</p>
-              <h2>Lint issues</h2>
-            </div>
-            <div class="issue-header-actions">
-              <div class="issue-filters" aria-label="Issue filter">
-                <button class="issue-filter active" type="button" data-issue-filter="action">Action required</button>
-                <button class="issue-filter" type="button" data-issue-filter="review">Needs review</button>
-                <button class="issue-filter" type="button" data-issue-filter="all">All</button>
-                <button class="issue-filter" type="button" data-issue-filter="accepted">Accepted risks</button>
-              </div>
-              <span id="issueCount" class="count-pill">0 issues</span>
+              <p class="eyebrow">Parsed intent</p>
+              <h2>Entities, actions, rules</h2>
             </div>
           </div>
-          <div id="issuesList" class="issue-list empty-state">No issues yet.</div>
+          <p id="intentNarrative" class="intent-narrative empty-state">No intent extracted yet.</p>
+          <div id="intentGrid" class="intent-grid empty-state">No intent extracted yet.</div>
         </section>
 
         <section class="panel" aria-label="Lint category guide">
@@ -243,6 +255,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/static/config.js"></script>
-    <script src="/static/app.js?v=fast-track-mvp" type="module"></script>
+    <script src="/static/app.js?v=flow-dashboard" type="module"></script>
   </body>
 </html>
