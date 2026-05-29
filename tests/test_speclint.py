@@ -1,7 +1,9 @@
 from datetime import date, timedelta
 import os
+import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -47,6 +49,23 @@ class SpecLintTests(unittest.TestCase):
         self.assertIn("severity_counts", payload)
         self.assertTrue(payload["issues"])
         self.assertTrue(payload["rewritten_spec"])
+
+    def test_api_analysis_survives_storage_outage(self):
+        client = TestClient(app)
+        with patch("backend.app.main.save_spec_version", side_effect=sqlite3.OperationalError("disk I/O error")):
+            response = client.post(
+                "/api/analyze",
+                json={
+                    "title": "Exports",
+                    "spec_text": "Users should be able to quickly export all data.",
+                    "strictness": "balanced",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIsNone(payload["spec_version_id"])
+        self.assertTrue(payload["issues"])
 
     def test_domain_context_adjusts_scoring_and_explains_severity_change(self):
         spec_text = (
@@ -378,6 +397,20 @@ class SpecLintTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["detail"], "IMPROPER INPUT")
+
+    def test_slang_adaptive_input_extracts_canonical_intent(self):
+        report = analyze_spec(
+            title="Kick fried invites",
+            spec_text=(
+                "Admins can kick homies from a workspace when their invite is fried. "
+                "The app shows an error and lets the admin retry the removal."
+            ),
+        )
+
+        self.assertIn("member", report.intent.actors)
+        self.assertIn("member", report.intent.entities)
+        self.assertIn("remove", report.intent.actions)
+        self.assertIn("failed", report.intent.states)
 
     def test_unless_clause_is_not_contradiction_by_default(self):
         report = analyze_spec(

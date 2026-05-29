@@ -225,6 +225,8 @@ OBJECT_TOKEN_ALIASES = {
     "emails": "email",
     "files": "file",
     "guests": "guest",
+    "homie": "member",
+    "homies": "member",
     "invites": "invitation",
     "invitations": "invitation",
     "links": "link",
@@ -246,6 +248,38 @@ OBJECT_TOKEN_ALIASES = {
     "tokens": "token",
     "users": "user",
     "workspaces": "workspace",
+}
+
+SLANG_ACTOR_ALIASES = {
+    "homie": "member",
+    "homies": "member",
+    "peer": "member",
+    "peers": "member",
+    "crew": "team",
+}
+
+SLANG_ENTITY_ALIASES = {
+    "homie": "member",
+    "homies": "member",
+    "repo": "repository",
+    "repos": "repository",
+}
+
+SLANG_ACTION_ALIASES = {
+    "boot": "remove",
+    "booted": "remove",
+    "kick": "remove",
+    "kicked": "remove",
+    "nuke": "delete",
+    "nuked": "delete",
+}
+
+SLANG_STATE_ALIASES = {
+    "borked": "failed",
+    "broken": "failed",
+    "busted": "failed",
+    "fried": "failed",
+    "toast": "failed",
 }
 
 SEVERITY_WEIGHTS = {
@@ -359,6 +393,16 @@ PRODUCT_SIGNAL_TERMS = {
     "view",
     "workspace",
 }
+PRODUCT_SIGNAL_TERMS.update(
+    set(SLANG_ACTOR_ALIASES)
+    | set(SLANG_ACTOR_ALIASES.values())
+    | set(SLANG_ENTITY_ALIASES)
+    | set(SLANG_ENTITY_ALIASES.values())
+    | set(SLANG_ACTION_ALIASES)
+    | set(SLANG_ACTION_ALIASES.values())
+    | set(SLANG_STATE_ALIASES)
+    | set(SLANG_STATE_ALIASES.values())
+)
 
 REQUIREMENT_LANGUAGE = re.compile(
     r"\b("
@@ -371,7 +415,7 @@ REQUIREMENT_LANGUAGE = re.compile(
 PRODUCT_ACTION_LANGUAGE = re.compile(
     r"\b("
     r"accept|approve|assign|cancel|checkout|connect|create|delete|download|edit|"
-    r"export|filter|invite|login|notify|pay|purchase|remove|request|reset|search|"
+    r"boot|export|filter|invite|kick|login|notify|nuke|pay|purchase|remove|request|reset|search|"
     r"send|share|sign[ -]?up|submit|transfer|update|upload|view"
     r")\b",
     re.I,
@@ -430,14 +474,24 @@ def analyze_spec(
 def _extract_intent(spec_text: str, sentences: list[str]) -> ExtractedIntent:
     tokens = tokenize(spec_text)
     token_set = set(tokens)
-    actors = sorted(_singularize(term) for term in token_set & ACTORS)
-    entities = sorted(_singularize(term) for term in token_set & ENTITIES)
-    actions = sorted(
-        stem
+    actors = [
+        *(_singularize(term) for term in token_set & ACTORS),
+        *(alias for term, alias in SLANG_ACTOR_ALIASES.items() if term in token_set),
+    ]
+    entities = [
+        *(_singularize(term) for term in token_set & ENTITIES),
+        *(alias for term, alias in SLANG_ENTITY_ALIASES.items() if term in token_set),
+    ]
+    actions = [
+        action
         for index, term in enumerate(tokens)
-        if (stem := _action_from_token(tokens, index)) in ACTION_TERMS
-    )
-    states = sorted(_singularize(term) for term in token_set & STATE_TERMS)
+        if (action := _action_from_token(tokens, index)) in ACTION_TERMS
+    ]
+    actions.extend(alias for term, alias in SLANG_ACTION_ALIASES.items() if term in token_set)
+    states = [
+        *(_singularize(term) for term in token_set & STATE_TERMS),
+        *(alias for term, alias in SLANG_STATE_ALIASES.items() if term in token_set),
+    ]
     explicit_rules = [
         sentence
         for sentence in sentences
@@ -1152,7 +1206,8 @@ def _validate_spec_input(title: str, spec_text: str) -> None:
     signal_count = _product_signal_count(combined_tokens)
     has_requirement_language = bool(REQUIREMENT_LANGUAGE.search(combined))
     has_product_action = bool(PRODUCT_ACTION_LANGUAGE.search(combined))
-    has_known_intent = bool(set(tokenize(combined)) & (ACTORS | ENTITIES | ACTION_TERMS | STATE_TERMS))
+    known_tokens = {_canonical_slang_token(token) for token in tokenize(combined)} | set(tokenize(combined))
+    has_known_intent = bool(known_tokens & (ACTORS | ENTITIES | ACTION_TERMS | STATE_TERMS | set(OBJECT_TOKEN_ALIASES.values())))
 
     if weird_ratio >= 0.45:
         raise SpecInputError("IMPROPER INPUT")
@@ -1171,9 +1226,20 @@ def _product_signal_count(tokens: list[str]) -> int:
     signals = set()
     for token in tokens:
         normalized = _stem_action(_singularize(token))
-        if token in PRODUCT_SIGNAL_TERMS or normalized in PRODUCT_SIGNAL_TERMS:
-            signals.add(normalized)
+        canonical = _canonical_slang_token(token)
+        if token in PRODUCT_SIGNAL_TERMS or normalized in PRODUCT_SIGNAL_TERMS or canonical in PRODUCT_SIGNAL_TERMS:
+            signals.add(canonical if canonical in PRODUCT_SIGNAL_TERMS else normalized)
     return len(signals)
+
+
+def _canonical_slang_token(token: str) -> str:
+    return (
+        SLANG_ACTION_ALIASES.get(token)
+        or SLANG_ACTOR_ALIASES.get(token)
+        or SLANG_ENTITY_ALIASES.get(token)
+        or SLANG_STATE_ALIASES.get(token)
+        or token
+    )
 
 
 def _weird_token_ratio(tokens: list[str]) -> float:
@@ -1227,7 +1293,7 @@ def _mentions_data_constraints(text: str) -> bool:
 
 
 def _mentions_failure_modes(text: str) -> bool:
-    return bool(re.search(r"\b(error|fail|fails|failure|fallback|retry|timeout|offline|empty state|denied|invalid|unavailable)\b", text))
+    return bool(re.search(r"\b(error|fail|fails|failure|fallback|retry|timeout|offline|empty state|denied|invalid|unavailable|fried|borked|busted|broken)\b", text))
 
 
 def _failure_mode_evidence(sentences: list[str], fallback: str) -> str:

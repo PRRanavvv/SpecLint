@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -120,14 +121,17 @@ def analyze(request: SpecAnalysisRequest) -> SpecAnalysisResponse:
             domain=request.domain,
             risk_overlays=request.risk_overlays,
         )
-        report.spec_version_id = save_spec_version(
-            report,
-            title=request.title,
-            spec_text=request.spec_text,
-            strictness=request.strictness,
-            domain=request.domain,
-            risk_overlays=request.risk_overlays,
-        )
+        try:
+            report.spec_version_id = save_spec_version(
+                report,
+                title=request.title,
+                spec_text=request.spec_text,
+                strictness=request.strictness,
+                domain=request.domain,
+                risk_overlays=request.risk_overlays,
+            )
+        except (OSError, sqlite3.Error):
+            report.spec_version_id = None
         return report
     except SpecInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

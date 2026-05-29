@@ -13,6 +13,7 @@ const state = {
   rewriteView: "formatted",
   sourceSpecText: null,
   preserveSourceForNextRun: false,
+  analysisRequestId: 0,
 };
 
 const API_BASE_URL = (window.SPECLINT_CONFIG?.apiBaseUrl || "").replace(/\/$/, "");
@@ -32,6 +33,10 @@ const productSignalTerms = new Set([
   "approve",
   "app",
   "assign",
+  "boot",
+  "borked",
+  "broken",
+  "busted",
   "cancel",
   "connect",
   "create",
@@ -44,10 +49,15 @@ const productSignalTerms = new Set([
   "export",
   "feature",
   "file",
+  "fried",
+  "homie",
+  "homies",
   "invite",
+  "kick",
   "login",
   "member",
   "notify",
+  "nuke",
   "order",
   "owner",
   "password",
@@ -72,12 +82,54 @@ const productSignalTerms = new Set([
 const requirementLanguagePattern =
   /\b(can|cannot|can't|must|should|shall|will|may|only|never|required|requires|allow|allows|enable|enables|let|lets|prevent|prevents)\b/i;
 const productActionPattern =
-  /\b(accept|approve|assign|cancel|connect|create|delete|download|edit|export|filter|invite|login|notify|pay|purchase|remove|request|reset|search|send|share|sign[ -]?up|submit|transfer|update|upload|view)\b/i;
+  /\b(accept|approve|assign|boot|cancel|connect|create|delete|download|edit|export|filter|invite|kick|login|notify|nuke|pay|purchase|remove|request|reset|search|send|share|sign[ -]?up|submit|transfer|update|upload|view)\b/i;
+
+const fastTrackSeverities = new Set(["critical", "high"]);
+const baselineIssueTypes = new Set([
+  "permission_gap",
+  "consent_gap",
+  "data_constraint_gap",
+  "lifecycle_gap",
+  "failure_mode_gap",
+  "contradiction",
+]);
+const overlayIssueTypes = {
+  auth: new Set(["permission_gap", "consent_gap", "lifecycle_gap", "failure_mode_gap", "data_constraint_gap"]),
+  payments: new Set(["permission_gap", "consent_gap", "data_constraint_gap", "lifecycle_gap", "failure_mode_gap"]),
+  pii: new Set(["permission_gap", "consent_gap", "data_constraint_gap"]),
+  public_sharing: new Set(["permission_gap", "lifecycle_gap", "failure_mode_gap", "data_constraint_gap"]),
+  high_availability: new Set(["failure_mode_gap", "lifecycle_gap", "data_constraint_gap"]),
+};
+const overlayKeywords = {
+  auth: ["auth", "authentication", "session", "mfa", "2fa", "password", "token", "role", "permission", "access"],
+  payments: ["payment", "payments", "invoice", "billing", "refund", "charge", "checkout", "transaction"],
+  pii: ["pii", "personal", "email", "profile", "account", "data", "retention", "export"],
+  public_sharing: ["public", "share", "sharing", "link", "viewer", "guest", "unauthenticated"],
+  high_availability: ["timeout", "retry", "fallback", "offline", "unavailable", "failure", "dependency", "availability"],
+};
+const slangTokenAliases = {
+  boot: "remove",
+  booted: "remove",
+  borked: "failed",
+  broken: "failed",
+  busted: "failed",
+  fried: "failed",
+  homie: "member",
+  homies: "member",
+  kick: "remove",
+  kicked: "remove",
+  nuke: "delete",
+  nuked: "delete",
+  toast: "failed",
+};
 
 const els = {
   titleInput: document.querySelector("#titleInput"),
   specInput: document.querySelector("#specInput"),
   specForm: document.querySelector("#specForm"),
+  editorPanel: document.querySelector("#editor"),
+  heroBand: document.querySelector("#heroBand"),
+  issuesPanel: document.querySelector("#issues"),
   analyzeButton: document.querySelector("#analyzeButton"),
   clearButton: document.querySelector("#clearButton"),
   exampleSelect: document.querySelector("#exampleSelect"),
@@ -388,6 +440,10 @@ function humanize(value) {
   return String(value || "").replaceAll("_", " ");
 }
 
+function severityIcon(severity) {
+  return severity === "critical" ? "&#128721;" : "&#9888;&#65039;";
+}
+
 function tags(items, empty = "None detected") {
   if (!items?.length) return `<span class="empty-state">${empty}</span>`;
   return items.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("");
@@ -397,11 +453,60 @@ function selectedRiskOverlays() {
   return [...els.riskOverlayInputs].filter((input) => input.checked).map((input) => input.value);
 }
 
+function issueSearchText(issue) {
+  return [
+    issue.type,
+    issue.title,
+    issue.evidence,
+    issue.suggestion,
+    issue.test_prompt,
+    issue.context_note,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function issueMatchesOverlay(issue, overlay) {
+  if (overlayIssueTypes[overlay]?.has(issue.type)) return true;
+  const text = issueSearchText(issue);
+  return (overlayKeywords[overlay] || []).some((keyword) => text.includes(keyword));
+}
+
+function isOverlayRelevantIssue(issue, overlays = selectedRiskOverlays()) {
+  if (!overlays.length) return true;
+  return baselineIssueTypes.has(issue.type) || overlays.some((overlay) => issueMatchesOverlay(issue, overlay));
+}
+
+function isFastTrackIssue(issue, overlays = selectedRiskOverlays()) {
+  return fastTrackSeverities.has(issue.severity) && isOverlayRelevantIssue(issue, overlays);
+}
+
+function fastTrackOpenIssues(issues = []) {
+  const overlays = selectedRiskOverlays();
+  return openIssues(issues).filter((issue) => isFastTrackIssue(issue, overlays));
+}
+
+function firstMinorRisk(issues = []) {
+  const overlays = selectedRiskOverlays();
+  return (
+    openIssues(issues).find((issue) => isOverlayRelevantIssue(issue, overlays) && !isFastTrackIssue(issue, overlays)) ||
+    openIssues(issues)[0] ||
+    null
+  );
+}
+
+function syncOverlayToggleState() {
+  els.riskOverlayInputs.forEach((input) => {
+    input.closest(".overlay-toggle")?.classList.toggle("active", input.checked);
+  });
+}
+
 function currentModeCopy() {
   const domain = humanize(els.domainSelect?.value || "general");
   const overlays = selectedRiskOverlays();
-  const overlayText = overlays.length ? ` Risk overlays: ${overlays.map(humanize).join(", ")}.` : " No risk overlays selected.";
-  return `${strictnessCopy[els.strictnessSelect.value]} Domain: ${domain}.${overlayText}`;
+  const overlayText = overlays.length ? ` Overlay focus: ${overlays.map(humanize).join(", ")}.` : " No risk overlays selected.";
+  return `${strictnessCopy[els.strictnessSelect.value]} Domain: ${domain}.${overlayText} Baseline blocker checks stay on.`;
 }
 
 function setRiskOverlays(overlays = []) {
@@ -409,6 +514,7 @@ function setRiskOverlays(overlays = []) {
   els.riskOverlayInputs.forEach((input) => {
     input.checked = selected.has(input.value);
   });
+  syncOverlayToggleState();
 }
 
 async function loadExamples() {
@@ -420,7 +526,19 @@ async function loadExamples() {
       .join("");
 }
 
-async function analyze({ recordHistory = true } = {}) {
+function setAnalyzing(isAnalyzing) {
+  document.body.classList.toggle("is-analyzing", isAnalyzing);
+  document.body.classList.toggle("focus-mode", false);
+  els.heroBand?.setAttribute("aria-busy", String(isAnalyzing));
+  els.analyzeButton.disabled = isAnalyzing;
+  els.analyzeButton.textContent = isAnalyzing ? "Analyzing" : "Analyze";
+}
+
+function focusDiagnostics() {
+  els.issuesPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function analyze({ recordHistory = true, focusResult = true } = {}) {
   const title = els.titleInput.value.trim() || "Untitled spec";
   const specText = els.specInput.value.trim();
   if (specText.length < 20) {
@@ -436,26 +554,39 @@ async function analyze({ recordHistory = true } = {}) {
   if (!state.preserveSourceForNextRun) {
     state.sourceSpecText = specText;
   }
-  els.analyzeButton.disabled = true;
-  els.analyzeButton.textContent = "Analyzing";
+  const requestId = ++state.analysisRequestId;
+  const snapshot = {
+    title,
+    specText,
+    sourceSpecText: state.sourceSpecText,
+    strictness: els.strictnessSelect.value,
+    domain: els.domainSelect.value,
+    riskOverlays: selectedRiskOverlays(),
+  };
+  setAnalyzing(true);
   try {
     const report = await api("/api/analyze", {
       method: "POST",
       body: JSON.stringify({
-        title,
-        spec_text: specText,
-        source_spec_text: state.sourceSpecText,
-        strictness: els.strictnessSelect.value,
-        domain: els.domainSelect.value,
-        risk_overlays: selectedRiskOverlays(),
+        title: snapshot.title,
+        spec_text: snapshot.specText,
+        source_spec_text: snapshot.sourceSpecText,
+        strictness: snapshot.strictness,
+        domain: snapshot.domain,
+        risk_overlays: snapshot.riskOverlays,
       }),
     });
+    if (requestId !== state.analysisRequestId) return;
     state.report = report;
     await hydrateSuppressions(report);
+    if (requestId !== state.analysisRequestId) return;
     await hydrateDecisions(report);
-    if (recordHistory) addHistory(report, specText);
+    if (requestId !== state.analysisRequestId) return;
+    if (recordHistory) addHistory(report, snapshot.specText);
     renderReport();
+    if (focusResult) focusDiagnostics();
   } catch (error) {
+    if (requestId !== state.analysisRequestId) return;
     if (error.status === 422) {
       renderInputRejected();
       toast("IMPROPER INPUT");
@@ -463,9 +594,10 @@ async function analyze({ recordHistory = true } = {}) {
       toast(error.message);
     }
   } finally {
-    state.preserveSourceForNextRun = false;
-    els.analyzeButton.disabled = false;
-    els.analyzeButton.textContent = "Analyze";
+    if (requestId === state.analysisRequestId) {
+      state.preserveSourceForNextRun = false;
+      setAnalyzing(false);
+    }
   }
 }
 
@@ -487,6 +619,7 @@ function productSignalCount(tokens) {
 }
 
 function normalizeToken(token) {
+  if (slangTokenAliases[token]) return slangTokenAliases[token];
   if (token.endsWith("ies") && token.length > 5) return `${token.slice(0, -3)}y`;
   if (token.endsWith("ing") && token.length > 5) return token.slice(0, -3);
   if (token.endsWith("ed") && token.length > 4) return token.slice(0, -2);
@@ -514,7 +647,7 @@ function addHistory(report, specText) {
     title: report.title,
     score: report.score,
     verdict: report.verdict,
-    issueCount: openIssues(report.issues).length,
+    issueCount: fastTrackOpenIssues(report.issues).length,
     delta: previous ? report.score - previous.score : 0,
     specText,
     at: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -525,18 +658,13 @@ function addHistory(report, specText) {
 function renderReport() {
   const report = state.report;
   if (!report) return;
-  const visibleIssues = openIssues(report.issues);
+  const visibleIssues = fastTrackOpenIssues(report.issues);
   els.scoreValue.textContent = report.score;
   els.scoreLabel.textContent = `${verdictLabel(report.verdict)} out of 100`;
   els.verdictText.textContent = `${report.score} / 100 - ${verdictLabel(report.verdict)}`;
   els.summaryText.textContent = report.summary;
   updateScoreProgress(report.score);
-  els.strictnessHelp.textContent = [
-    report.strictness_note || strictnessCopy[els.strictnessSelect.value],
-    report.domain_note,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  els.strictnessHelp.textContent = currentModeCopy();
   renderSeverityCounts(severityCountsForIssues(visibleIssues));
   renderRubric(report.score_breakdown);
   renderIntent(report.intent);
@@ -644,16 +772,22 @@ function renderIntent(intent) {
 }
 
 function renderIssues(issues) {
-  const visibleIssues = openIssues(issues);
+  const visibleIssues = fastTrackOpenIssues(issues);
   const acceptedRisks = acceptedRiskRecords(issues);
   const decisions = decisionRecords(issues);
   const pendingReviews = pendingReviewRecords(issues);
   const acceptedCount = acceptedRisks.length;
   renderIssueFilterState();
-  els.issueCount.textContent = `${visibleIssues.length} open${pendingReviews.length ? ` + ${pendingReviews.length} review` : ""}${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
+  els.issueCount.textContent = `${visibleIssues.length} blocker${visibleIssues.length === 1 ? "" : "s"}${pendingReviews.length ? ` + ${pendingReviews.length} review` : ""}${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
   if (!issues.length) {
     els.issuesList.className = "issue-list empty-state";
     els.issuesList.textContent = "No lint issues found.";
+    return;
+  }
+  if (!visibleIssues.length && state.issueFilter === "action") {
+    const minor = firstMinorRisk(issues);
+    els.issuesList.className = "issue-list";
+    els.issuesList.innerHTML = `<article class="issue-item fast-track-good">&#9989; Build-ready. Watch out for: ${escapeHtml(minor?.title || "one minor risk")}.</article>`;
     return;
   }
   els.issuesList.className = "issue-list";
@@ -679,34 +813,24 @@ function issueMarkupFor(issue) {
   const isSuppressing = state.suppressingIssueId === issue.id;
   const isDeciding = state.decidingIssueId === issue.id;
   return `
-        <article class="issue-item">
-          <div class="issue-topline">
-            <div class="tag-row">
-              <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
-              ${
-                issue.base_severity
-                  ? `<span class="tag context-tag">${humanize(issue.base_severity)} -> ${humanize(issue.severity)}</span>`
-                  : ""
-              }
-              <span class="tag">${humanize(issue.type)}</span>
-              ${issue.context_note ? `<span class="tag context-tag">${escapeHtml(issue.context_note)}</span>` : ""}
-            </div>
+        <article class="issue-item fast-track-issue">
+          <div class="issue-fast-line">
+            <p><strong>${severityIcon(issue.severity)} ${escapeHtml(issue.title)}:</strong> ${escapeHtml(issue.suggestion)}</p>
             <div class="issue-actions">
               <button class="cta-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Fix</button>
               <button class="cta-button compact decide-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Decide</button>
               <button class="cta-button compact suppress-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Accept</button>
             </div>
           </div>
-          <h3>${escapeHtml(issue.title)}</h3>
-          <div class="issue-grid">
-            <span class="issue-label">Evidence</span>
-            <p>${escapeHtml(issue.evidence)}</p>
-            <span class="issue-label">Why it matters</span>
-            <p>${escapeHtml(issue.why_it_matters)}</p>
-            <span class="issue-label">Suggested fix</span>
-            <p>${escapeHtml(issue.suggestion)}</p>
-            <span class="issue-label">Question to answer</span>
-            <p>${escapeHtml(issue.test_prompt)}</p>
+          <div class="tag-row issue-meta">
+            <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
+            ${
+              issue.base_severity
+                ? `<span class="tag context-tag">${humanize(issue.base_severity)} -> ${humanize(issue.severity)}</span>`
+                : ""
+            }
+            <span class="tag">${humanize(issue.type)}</span>
+            ${issue.context_note ? `<span class="tag context-tag">${escapeHtml(issue.context_note)}</span>` : ""}
           </div>
           ${
             isDeciding
@@ -1080,9 +1204,15 @@ function applyIssueFix(issueId) {
   const divider = els.specInput.value.includes("Clarifications to add:")
     ? ""
     : "\n\nClarifications to add:";
-  els.specInput.value = `${els.specInput.value.trim()}${divider}\n${line}`;
+  const nextDraft = `${els.specInput.value.trim()}${divider}\n${line}`;
+  const selectionStart = Math.max(0, nextDraft.length - line.length);
+  els.specInput.value = nextDraft;
+  els.editorPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
   els.specInput.focus();
-  toast("Fix added to the draft. Re-run SpecLint to check the score.");
+  els.specInput.selectionStart = selectionStart;
+  els.specInput.selectionEnd = nextDraft.length;
+  els.specInput.scrollTop = els.specInput.scrollHeight;
+  toast("Fix added. Re-run SpecLint to check it.");
 }
 
 function openSuppressionForm(issueId) {
@@ -1423,8 +1553,22 @@ els.domainSelect?.addEventListener("change", () => {
 
 els.riskOverlayInputs.forEach((input) => {
   input.addEventListener("change", () => {
+    syncOverlayToggleState();
     els.strictnessHelp.textContent = currentModeCopy();
+    if (state.report) renderReport();
   });
+});
+
+els.specInput.addEventListener("focus", () => {
+  document.body.classList.add("focus-mode");
+});
+
+els.specInput.addEventListener("input", () => {
+  if (document.activeElement === els.specInput) document.body.classList.add("focus-mode");
+});
+
+els.specInput.addEventListener("blur", () => {
+  document.body.classList.remove("focus-mode");
 });
 
 els.themeToggle?.addEventListener("click", () => {
@@ -1541,6 +1685,7 @@ els.historyList.addEventListener("click", (event) => {
 
 const storedTheme = getStoredTheme();
 setTheme(storedTheme || currentTheme() || systemTheme(), { persist: Boolean(storedTheme) });
+syncOverlayToggleState();
 
 const themePreference = window.matchMedia?.("(prefers-color-scheme: dark)");
 themePreference?.addEventListener?.("change", (event) => {
@@ -1550,6 +1695,6 @@ themePreference?.addEventListener?.("change", (event) => {
 loadExamples()
   .then(() => {
     const loaded = loadFromHash();
-    return analyze({ recordHistory: true && loaded });
+    return analyze({ recordHistory: true && loaded, focusResult: false });
   })
   .catch((error) => toast(error.message));

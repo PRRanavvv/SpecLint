@@ -160,6 +160,10 @@
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -168,6 +172,17 @@ body {
   color: var(--ink);
   font-family: var(--font-main);
   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+body.focus-mode .sidebar,
+body.focus-mode .hero-band,
+body.focus-mode .rubric-strip,
+body.focus-mode .panel:not(.editor-panel) {
+  opacity: 0.8;
+}
+
+body.is-analyzing .analysis-pulse {
+  opacity: 1;
 }
 
 button,
@@ -603,6 +618,7 @@ textarea:focus {
 }
 
 .hero-band {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(220px, 0.65fr) minmax(300px, 1fr);
   align-items: center;
@@ -610,6 +626,53 @@ textarea:focus {
   min-height: 108px;
   padding: 20px;
   margin-bottom: 18px;
+  overflow: hidden;
+}
+
+.analysis-pulse {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.analysis-pulse::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -34%;
+  width: 34%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--stone-sage), var(--stone-warm), transparent);
+  animation: pulse-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse-sweep {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(390%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  .diagnostic-container,
+  .issue-list,
+  .rewrite-box {
+    scroll-behavior: auto;
+  }
+
+  .analysis-pulse::before {
+    animation: none;
+    left: 0;
+    width: 100%;
+  }
 }
 
 .hero-band p:last-child {
@@ -713,6 +776,12 @@ textarea:focus {
   margin-top: 18px;
 }
 
+.diagnostic-container {
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
 .panel-header {
   min-height: 72px;
   padding: 16px;
@@ -757,25 +826,73 @@ label span {
   gap: 8px;
 }
 
-.overlay-options label {
+.overlay-toggle {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
-  min-height: 32px;
-  padding: 5px 10px;
+  min-height: 36px;
+  padding: 6px 12px 6px 36px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--control-bg);
   color: var(--copy-strong);
   font-size: 13px;
-  font-weight: 800;
-  transition: var(--theme-transition);
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    var(--theme-transition),
+    box-shadow 0.2s ease,
+    padding 0.2s ease;
 }
 
-.overlay-options input {
-  width: 14px;
-  min-height: 14px;
-  accent-color: var(--blue);
+.overlay-toggle::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--toggle-orb-bg);
+  box-shadow: var(--pressed-shadow);
+  transition:
+    left 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.overlay-toggle input {
+  position: absolute;
+  width: 1px;
+  min-height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.overlay-toggle span {
+  position: relative;
+  z-index: 1;
+  white-space: nowrap;
+}
+
+.overlay-toggle.active,
+.overlay-toggle:has(input:checked) {
+  padding: 6px 36px 6px 12px;
+  border-color: var(--stone-sage);
+  background: var(--toggle-active-bg);
+  color: var(--toggle-active-ink);
+  box-shadow: 0 0 0 3px rgba(165, 165, 141, 0.18);
+}
+
+.overlay-toggle.active::before,
+.overlay-toggle:has(input:checked)::before {
+  left: calc(100% - 26px);
+  background: var(--toggle-orb-bg);
+}
+
+.overlay-toggle:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-shadow);
 }
 
 .intent-narrative {
@@ -868,6 +985,8 @@ label span {
   display: grid;
   gap: 12px;
   padding: 16px;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
 }
 
 .category-guide {
@@ -940,6 +1059,34 @@ label span {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.issue-meta {
+  min-width: 0;
+}
+
+.issue-fast-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.issue-fast-line p {
+  color: var(--copy-strong);
+  line-height: 1.45;
+}
+
+.issue-fast-line strong {
+  color: var(--ink);
+}
+
+.fast-track-good {
+  border-color: var(--decided-border);
+  background: var(--decided-bg);
+  color: var(--copy-strong);
+  font-weight: 900;
+  line-height: 1.45;
 }
 
 .issue-grid {
@@ -1038,6 +1185,8 @@ label span {
   margin: 0;
   padding: 16px;
   overflow: auto;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
   color: var(--rewrite-ink);
   line-height: 1.55;
 }
@@ -1252,6 +1401,10 @@ label span {
 
   .issue-actions {
     justify-content: flex-start;
+  }
+
+  .issue-fast-line {
+    grid-template-columns: 1fr;
   }
 
   .suppression-fields,

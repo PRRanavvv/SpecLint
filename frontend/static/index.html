@@ -18,7 +18,7 @@
         document.documentElement.dataset.theme = theme;
       })();
     </script>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=fast-track-mvp" />
   </head>
   <body>
     <div class="app-shell">
@@ -83,9 +83,10 @@
           </div>
         </header>
 
-        <section class="hero-band">
+        <section id="heroBand" class="hero-band">
+          <div id="analysisPulse" class="analysis-pulse" aria-hidden="true"></div>
           <div>
-            <p class="eyebrow">Compiler result</p>
+            <p class="eyebrow">Fast-Track result</p>
             <h2 id="verdictText">Waiting for input</h2>
           </div>
           <p id="summaryText">Paste a product spec and run SpecLint.</p>
@@ -129,11 +130,11 @@
               <fieldset class="overlay-fieldset">
                 <legend>Risk overlays</legend>
                 <div class="overlay-options">
-                  <label><input type="checkbox" name="riskOverlay" value="auth" /> Auth</label>
-                  <label><input type="checkbox" name="riskOverlay" value="payments" /> Payments</label>
-                  <label><input type="checkbox" name="riskOverlay" value="pii" /> PII</label>
-                  <label><input type="checkbox" name="riskOverlay" value="public_sharing" /> Public sharing</label>
-                  <label><input type="checkbox" name="riskOverlay" value="high_availability" /> High availability</label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="auth" /><span>Auth</span></label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="payments" /><span>Payments</span></label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="pii" /><span>PII</span></label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="public_sharing" /><span>Public sharing</span></label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="high_availability" /><span>High availability</span></label>
                 </div>
               </fieldset>
               <label>
@@ -155,7 +156,7 @@
           </section>
         </div>
 
-        <section id="issues" class="panel report-panel" aria-label="Lint issues">
+        <section id="issues" class="panel report-panel diagnostic-container" aria-label="Lint issues">
           <div class="panel-header">
             <div>
               <p class="eyebrow">Diagnostics</p>
@@ -242,6 +243,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/static/config.js"></script>
-    <script src="/static/app.js" type="module"></script>
+    <script src="/static/app.js?v=fast-track-mvp" type="module"></script>
   </body>
 </html>
