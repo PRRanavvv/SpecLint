@@ -18,11 +18,11 @@
         document.documentElement.dataset.theme = theme;
       })();
     </script>
-    <link rel="stylesheet" href="/static/styles.css?v=flow-dashboard" />
+    <link rel="stylesheet" href="/static/styles.css?v=editor-preview" />
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar" aria-label="Workspace navigation">
+      <aside class="sidebar" aria-label="SpecLint workspace">
         <div class="brand">
           <div class="brand-mark" aria-hidden="true">SL</div>
           <div>
@@ -30,7 +30,15 @@
             <span>Intent compiler</span>
           </div>
         </div>
-        <div class="sidebar-dashboard" aria-label="Diagnostic focus">
+
+        <button id="newSpecButton" class="new-spec-button" type="button">New Spec</button>
+
+        <section class="sidebar-section" aria-label="Run history">
+          <div class="dashboard-kicker">Run history</div>
+          <div id="sidebarHistory" class="sidebar-history empty-state">No saved runs yet.</div>
+        </section>
+
+        <section class="sidebar-dashboard" aria-label="Diagnostic focus">
           <div class="dashboard-kicker">Focus</div>
           <div class="severity-toggles" aria-label="Severity filters">
             <button class="severity-toggle" type="button" data-severity-filter="critical">
@@ -44,7 +52,8 @@
               <b id="highCount">0</b>
             </button>
           </div>
-        </div>
+        </section>
+
         <footer class="tiny-footer">
           <span class="creator-mark" aria-hidden="true">PR</span>
           <span>&copy; 2026 Pranav. SpecLint &middot; <a href="https://github.com/PRRanavvv/SpecLint">GitHub</a></span>
@@ -53,31 +62,13 @@
 
       <main class="workspace">
         <header class="topbar">
-          <div>
+          <div class="title-stack">
             <p class="eyebrow">Product requirements</p>
-            <h1>Compile vague specs before they become bugs.</h1>
-            <div class="pipeline-bar" aria-label="Workflow state">
-              <span class="pipeline-step active" data-pipeline-step="draft">Draft</span>
-              <span class="pipeline-step" data-pipeline-step="diagnose">Diagnose</span>
-              <span class="pipeline-step" data-pipeline-step="tighten">Tighten</span>
-              <span class="pipeline-step" data-pipeline-step="finalize">Finalize</span>
-              <strong id="pipelineState">Drafting</strong>
-            </div>
+            <h1>SpecLint</h1>
+            <div id="intentBadge" class="intent-badge">Intent: waiting for draft</div>
           </div>
+
           <div class="top-actions">
-            <div class="action-cluster">
-              <div class="score-gauge" id="scoreGauge" aria-label="Build health">
-                <span id="scoreValue">--</span>
-                <small id="scoreLabel">Build health</small>
-              </div>
-              <button id="analyzeButton" class="primary action-button" type="button">Analyze</button>
-            </div>
-            <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" title="Switch to dark mode">
-              <span id="themeToggleLabel" class="theme-toggle-label">Day mode</span>
-              <span class="theme-toggle-orb" aria-hidden="true">
-                <span class="theme-toggle-icon"></span>
-              </span>
-            </button>
             <select id="exampleSelect" aria-label="Load example">
               <option value="">Examples</option>
             </select>
@@ -93,16 +84,35 @@
               <option value="ecommerce">E-commerce</option>
               <option value="internal_tooling">Internal tooling</option>
             </select>
+            <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" title="Switch to dark mode">
+              <span id="themeToggleLabel" class="theme-toggle-label">Day mode</span>
+              <span class="theme-toggle-orb" aria-hidden="true">
+                <span class="theme-toggle-icon"></span>
+              </span>
+            </button>
+            <div class="action-cluster">
+              <div class="score-gauge" id="scoreGauge" aria-label="Build health">
+                <span id="scoreValue">--</span>
+                <small id="scoreLabel">Build health</small>
+              </div>
+              <button id="analyzeButton" class="primary action-button" type="button">Analyze</button>
+            </div>
           </div>
         </header>
 
-        <section id="heroBand" class="hero-band">
+        <section id="heroBand" class="status-rail">
           <div id="analysisPulse" class="analysis-pulse" aria-hidden="true"></div>
-          <div>
-            <p class="eyebrow">Fast-Track result</p>
-            <h2 id="verdictText">Waiting for input</h2>
+          <div class="pipeline-bar" aria-label="Workflow state">
+            <span class="pipeline-step active" data-pipeline-step="draft">Draft</span>
+            <span class="pipeline-step" data-pipeline-step="diagnose">Analyze</span>
+            <span class="pipeline-step" data-pipeline-step="tighten">Tighten</span>
+            <span class="pipeline-step" data-pipeline-step="finalize">Save</span>
+            <strong id="pipelineState">Drafting</strong>
           </div>
-          <p id="summaryText">Paste a product spec and run SpecLint.</p>
+          <div class="status-copy">
+            <strong id="verdictText">Waiting for input</strong>
+            <span id="summaryText">Paste a product spec and run SpecLint.</span>
+          </div>
           <progress
             id="scoreProgress"
             class="score-progress"
@@ -110,25 +120,16 @@
             value="0"
             max="100"
           ></progress>
+          <p id="rubricText" class="rubric-copy">Score is out of 100. Penalties appear here after analysis.</p>
+          <p id="strictnessHelp" class="rubric-copy">Balanced - close to planning, default rubric, catches real holes.</p>
         </section>
 
-        <section class="rubric-strip" aria-label="Score rubric">
-          <div>
-            <strong>Score rubric</strong>
-            <p id="rubricText">Score is out of 100. Penalties appear here after analysis.</p>
-          </div>
-          <div>
-            <strong>Mode</strong>
-            <p id="strictnessHelp">Balanced - close to planning, default rubric, catches real holes.</p>
-          </div>
-        </section>
-
-        <div class="main-grid">
+        <section class="workspace-grid" aria-label="Editor preview workspace">
           <section id="editor" class="panel editor-panel" aria-label="Spec editor">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Input</p>
-                <h2>Spec</h2>
+                <h2>Draft workspace</h2>
               </div>
               <div class="button-row">
                 <button id="clearButton" class="ghost-button" type="button">Clear</button>
@@ -151,110 +152,88 @@
               </fieldset>
               <label>
                 <span>Requirement</span>
-                <textarea id="specInput" minlength="20" maxlength="12000" rows="14" placeholder="Example: Workspace admins can transfer ownership to another member. The current owner must confirm the transfer and the new owner gets notified.">Workspace admins can transfer ownership to another member. The current owner should confirm the transfer and the new owner gets notified. The transfer should be simple and safe.</textarea>
+                <textarea id="specInput" minlength="20" maxlength="12000" rows="18" placeholder="Example: Workspace admins can transfer ownership to another member. The current owner must confirm the transfer and the new owner gets notified.">Workspace admins can transfer ownership to another member. The current owner should confirm the transfer and the new owner gets notified. The transfer should be simple and safe.</textarea>
               </label>
             </form>
           </section>
 
-          <section id="issues" class="panel report-panel diagnostic-container" aria-label="Lint issues">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Diagnostics</p>
-                <h2>Lint issues</h2>
-              </div>
-              <div class="issue-header-actions">
-                <div class="issue-filters" aria-label="Issue filter">
-                  <button class="issue-filter active" type="button" data-issue-filter="action">Action required</button>
-                  <button class="issue-filter" type="button" data-issue-filter="review">Needs review</button>
-                  <button class="issue-filter" type="button" data-issue-filter="all">All</button>
-                  <button class="issue-filter" type="button" data-issue-filter="accepted">Accepted risks</button>
-                </div>
-                <span id="issueCount" class="count-pill">0 issues</span>
-              </div>
-            </div>
-            <div id="issuesList" class="issue-list empty-state">No issues yet.</div>
-          </section>
-        </div>
-
-        <section class="panel intent-panel" aria-label="Extracted intent">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Parsed intent</p>
-              <h2>Entities, actions, rules</h2>
-            </div>
-          </div>
-          <p id="intentNarrative" class="intent-narrative empty-state">No intent extracted yet.</p>
-          <div id="intentGrid" class="intent-grid empty-state">No intent extracted yet.</div>
-        </section>
-
-        <section class="panel" aria-label="Lint category guide">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Trust guide</p>
-              <h2>What each check means</h2>
-            </div>
-          </div>
-          <div id="categoryGuide" class="category-guide empty-state">Run analysis to see the lint categories.</div>
-        </section>
-
-        <div class="lower-grid">
-          <section id="tests" class="panel" aria-label="Acceptance tests">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Verification</p>
-                <h2>Acceptance tests</h2>
-              </div>
-            </div>
-            <div id="testsList" class="test-list empty-state">No tests generated yet.</div>
-          </section>
-
-          <section class="panel" aria-label="Rewritten spec">
-            <div class="panel-header">
+          <section class="panel preview-panel" aria-label="Build-ready draft preview">
+            <div class="panel-header preview-header">
               <div>
                 <p class="eyebrow">Build-ready draft</p>
-                <h2>Rewritten spec</h2>
+                <h2>Preview</h2>
               </div>
-              <div class="button-row">
+              <div class="button-row preview-actions">
                 <button id="formattedButton" class="ghost-button active" type="button">Formatted</button>
                 <button id="diffButton" class="ghost-button" type="button">Diff</button>
                 <button id="useRewriteButton" class="ghost-button" type="button">Use + re-run</button>
                 <button id="copyRewriteButton" class="ghost-button" type="button">Copy</button>
+                <button id="downloadButton" class="ghost-button" type="button">Download</button>
+                <button id="shareButton" class="ghost-button" type="button">Share</button>
               </div>
             </div>
             <div id="rewriteBox" class="rewrite-box empty-state">Run analysis to generate a tighter version.</div>
-          </section>
-        </div>
 
-        <div class="lower-grid">
-          <section class="panel trace-panel" aria-label="Traceability map">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Traceability</p>
-                <h2>Requirements to tests</h2>
+            <section id="issues" class="diagnostics-drawer diagnostic-container" aria-label="Critical diagnostics">
+              <div class="diagnostics-header">
+                <div>
+                  <p class="eyebrow">Diagnostics</p>
+                  <h2>Critical blockers</h2>
+                </div>
+                <span id="issueCount" class="count-pill">0 issues</span>
               </div>
-            </div>
+              <div class="issue-filters" aria-label="Issue filter">
+                <button class="issue-filter active" type="button" data-issue-filter="action">Action required</button>
+                <button class="issue-filter" type="button" data-issue-filter="review">Needs review</button>
+                <button class="issue-filter" type="button" data-issue-filter="all">All</button>
+                <button class="issue-filter" type="button" data-issue-filter="accepted">Accepted risks</button>
+              </div>
+              <div id="issuesList" class="issue-list empty-state">No issues yet.</div>
+            </section>
+          </section>
+        </section>
+
+        <section class="detail-stack" aria-label="Deep dive panels">
+          <details class="detail-drawer">
+            <summary>
+              <span>Intent summary</span>
+              <b>Entities, actions, rules</b>
+            </summary>
+            <p id="intentNarrative" class="intent-narrative empty-state">No intent extracted yet.</p>
+            <div id="intentGrid" class="intent-grid empty-state">No intent extracted yet.</div>
+          </details>
+
+          <details class="detail-drawer">
+            <summary>
+              <span>Verification</span>
+              <b>Acceptance tests</b>
+            </summary>
+            <div id="testsList" class="test-list empty-state">No tests generated yet.</div>
+          </details>
+
+          <details class="detail-drawer">
+            <summary>
+              <span>Traceability</span>
+              <b>Requirements to tests</b>
+            </summary>
             <div id="traceList" class="trace-list empty-state">No traceability map yet.</div>
-          </section>
+          </details>
 
-          <section class="panel" aria-label="Run history">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Iteration</p>
-                <h2>Run history</h2>
-              </div>
-              <div class="button-row">
-                <button id="shareButton" class="ghost-button" type="button">Share link</button>
-                <button id="downloadButton" class="ghost-button" type="button">Download MD</button>
-              </div>
-            </div>
+          <details class="detail-drawer">
+            <summary>
+              <span>Iteration</span>
+              <b>Saved run history</b>
+            </summary>
             <div id="historyList" class="history-list empty-state">No previous runs yet.</div>
-          </section>
-        </div>
+          </details>
+        </section>
+
+        <div id="categoryGuide" hidden></div>
       </main>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/static/config.js"></script>
-    <script src="/static/app.js?v=flow-dashboard" type="module"></script>
+    <script src="/static/app.js?v=editor-preview" type="module"></script>
   </body>
 </html>

@@ -1,10 +1,11 @@
 const SUPPRESSIONS_STORAGE_KEY = "speclint-suppressions";
 const DECISIONS_STORAGE_KEY = "speclint-decisions";
+const RUN_HISTORY_STORAGE_KEY = "speclint-run-history";
 
 const state = {
   report: null,
   examples: [],
-  history: [],
+  history: loadHistory(),
   suppressions: loadSuppressions(),
   decisions: loadDecisions(),
   suppressingIssueId: null,
@@ -132,6 +133,7 @@ const els = {
   editorPanel: document.querySelector("#editor"),
   heroBand: document.querySelector("#heroBand"),
   issuesPanel: document.querySelector("#issues"),
+  newSpecButton: document.querySelector("#newSpecButton"),
   analyzeButton: document.querySelector("#analyzeButton"),
   clearButton: document.querySelector("#clearButton"),
   exampleSelect: document.querySelector("#exampleSelect"),
@@ -148,6 +150,7 @@ const els = {
   severityToggles: document.querySelectorAll("[data-severity-filter]"),
   verdictText: document.querySelector("#verdictText"),
   summaryText: document.querySelector("#summaryText"),
+  intentBadge: document.querySelector("#intentBadge"),
   pipelineState: document.querySelector("#pipelineState"),
   pipelineSteps: document.querySelectorAll("[data-pipeline-step]"),
   rubricText: document.querySelector("#rubricText"),
@@ -161,6 +164,7 @@ const els = {
   rewriteBox: document.querySelector("#rewriteBox"),
   traceList: document.querySelector("#traceList"),
   historyList: document.querySelector("#historyList"),
+  sidebarHistory: document.querySelector("#sidebarHistory"),
   formattedButton: document.querySelector("#formattedButton"),
   diffButton: document.querySelector("#diffButton"),
   useRewriteButton: document.querySelector("#useRewriteButton"),
@@ -235,6 +239,24 @@ function loadDecisions() {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
+  }
+}
+
+function loadHistory() {
+  try {
+    const raw = window.localStorage.getItem(RUN_HISTORY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.slice(0, 12) : [];
+  } catch {
+    return [];
+  }
+}
+
+function storeHistory() {
+  try {
+    window.localStorage.setItem(RUN_HISTORY_STORAGE_KEY, JSON.stringify(state.history.slice(0, 12)));
+  } catch {
+    toast("Run history is available for this session, but browser storage is blocked.");
   }
 }
 
@@ -602,7 +624,7 @@ function runPrimaryAction() {
 }
 
 function focusDiagnostics() {
-  els.issuesPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+  document.querySelector(".preview-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 async function analyze({ recordHistory = true, focusResult = true } = {}) {
@@ -711,16 +733,34 @@ function looksLikeNoise(token) {
 
 function addHistory(report, specText) {
   const previous = state.history[0];
+  const title = report.title || els.titleInput.value.trim() || "Untitled spec";
+  if (previous?.specText === specText && previous?.title === title) {
+    previous.score = report.score;
+    previous.verdict = report.verdict;
+    previous.issueCount = fastTrackOpenIssues(report.issues, { respectSeverityFilter: false }).length;
+    previous.rewrittenSpec = report.rewritten_spec || "";
+    previous.at = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    previous.updatedAt = new Date().toISOString();
+    storeHistory();
+    return;
+  }
   state.history.unshift({
-    title: report.title,
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title,
     score: report.score,
     verdict: report.verdict,
     issueCount: fastTrackOpenIssues(report.issues, { respectSeverityFilter: false }).length,
     delta: previous ? report.score - previous.score : 0,
     specText,
+    strictness: els.strictnessSelect.value,
+    domain: els.domainSelect.value,
+    riskOverlays: selectedRiskOverlays(),
+    rewrittenSpec: report.rewritten_spec || "",
     at: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    updatedAt: new Date().toISOString(),
   });
-  state.history = state.history.slice(0, 6);
+  state.history = state.history.slice(0, 12);
+  storeHistory();
 }
 
 function renderReport() {
@@ -757,11 +797,13 @@ function renderInputRejected() {
   updateScoreProgress(0);
   els.rubricText.textContent = "No score generated. This input was rejected before analysis.";
   els.strictnessHelp.textContent = currentModeCopy();
+  if (els.intentBadge) els.intentBadge.textContent = "Intent: rejected input";
   els.intentNarrative.className = "intent-narrative empty-state";
   els.intentNarrative.textContent = "No intent extracted.";
   els.intentGrid.className = "intent-grid empty-state";
   els.intentGrid.textContent = "IMPROPER INPUT";
   els.issueCount.textContent = "0 issues";
+  els.issuesPanel?.classList.remove("has-blockers", "has-diagnostics");
   els.issuesList.className = "issue-list empty-state";
   els.issuesList.textContent = "IMPROPER INPUT";
   els.testsList.className = "test-list empty-state";
@@ -770,7 +812,6 @@ function renderInputRejected() {
   els.traceList.textContent = "No traceability map generated.";
   els.rewriteBox.className = "rewrite-box empty-state";
   els.rewriteBox.textContent = "IMPROPER INPUT";
-  state.history = [];
   renderHistory();
   renderSeverityCounts({});
   updateWorkflowUi();
@@ -817,6 +858,12 @@ function renderIntent(intent) {
   const actorText = intent.actors.length ? intent.actors.join(", ") : "an unspecified actor";
   const actionText = intent.actions.length ? intent.actions.join(", ") : "an unspecified action";
   const entityText = intent.entities.length ? intent.entities.join(", ") : "an unspecified object";
+  const badgeActor = intent.actors[0] || "actor";
+  const badgeAction = intent.actions[0] || "acts on";
+  const badgeEntity = intent.entities[0] || "object";
+  if (els.intentBadge) {
+    els.intentBadge.textContent = `Intent: ${badgeActor} ${badgeAction} ${badgeEntity}`;
+  }
   els.intentNarrative.className = "intent-narrative";
   els.intentNarrative.textContent = `SpecLint reads this as: ${actorText} can ${actionText} ${entityText}. Use this to spot missing relationships, not as final truth.`;
 
@@ -855,6 +902,14 @@ function renderIssues(issues) {
   renderIssueFilterState();
   const focusLabel = state.severityFilter === "all" ? "" : ` ${state.severityFilter}`;
   els.issueCount.textContent = `${visibleIssues.length}${focusLabel} blocker${visibleIssues.length === 1 ? "" : "s"}${pendingReviews.length ? ` + ${pendingReviews.length} review` : ""}${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
+  const shouldOpenDrawer =
+    visibleIssues.length > 0 ||
+    state.issueFilter !== "action" ||
+    pendingReviews.length > 0 ||
+    decisions.length > 0 ||
+    acceptedCount > 0;
+  els.issuesPanel?.classList.toggle("has-blockers", visibleIssues.length > 0);
+  els.issuesPanel?.classList.toggle("has-diagnostics", shouldOpenDrawer);
   if (!issues.length) {
     els.issuesList.className = "issue-list empty-state";
     els.issuesList.textContent = "No lint issues found.";
@@ -1135,6 +1190,7 @@ function decisionMarkup(records) {
 }
 
 function renderCategoryGuide(categories = []) {
+  if (!els.categoryGuide) return;
   if (!categories.length) {
     els.categoryGuide.className = "category-guide empty-state";
     els.categoryGuide.textContent = "Run analysis to see the lint categories.";
@@ -1262,24 +1318,102 @@ function renderDiff(original, rewritten) {
 }
 
 function renderHistory() {
+  const emptyCopy = "No saved runs yet.";
   if (!state.history.length) {
-    els.historyList.className = "history-list empty-state";
-    els.historyList.textContent = "No previous runs yet.";
+    if (els.historyList) {
+      els.historyList.className = "history-list empty-state";
+      els.historyList.textContent = emptyCopy;
+    }
+    if (els.sidebarHistory) {
+      els.sidebarHistory.className = "sidebar-history empty-state";
+      els.sidebarHistory.textContent = emptyCopy;
+    }
     return;
   }
-  els.historyList.className = "history-list";
-  els.historyList.innerHTML = state.history
+  const sidebarMarkup = state.history
     .map(
       (run, index) => `
-        <button class="history-item" type="button" data-index="${index}">
-          <span>${escapeHtml(run.at)}</span>
-          <strong>${run.score}/100</strong>
-          <small>${run.delta > 0 ? "+" : ""}${run.delta} from previous</small>
-          <small>${run.issueCount} issue${run.issueCount === 1 ? "" : "s"}</small>
+        <button class="sidebar-history-item" type="button" data-index="${index}">
+          <strong>${escapeHtml(run.title || "Untitled spec")}</strong>
+          <span>${escapeHtml(run.score ?? "--")}/100 · ${escapeHtml(run.at || "saved")}</span>
         </button>
       `,
     )
     .join("");
+  const detailMarkup = state.history
+    .map(
+      (run, index) => `
+        <button class="history-item" type="button" data-index="${index}">
+          <span>${escapeHtml(run.at || "saved")}</span>
+          <strong>${escapeHtml(run.score ?? "--")}/100</strong>
+          <small>${escapeHtml(run.title || "Untitled spec")}</small>
+          <small>${run.issueCount || 0} blocker${run.issueCount === 1 ? "" : "s"}</small>
+        </button>
+      `,
+    )
+    .join("");
+  if (els.sidebarHistory) {
+    els.sidebarHistory.className = "sidebar-history";
+    els.sidebarHistory.innerHTML = sidebarMarkup;
+  }
+  if (els.historyList) {
+    els.historyList.className = "history-list";
+    els.historyList.innerHTML = detailMarkup;
+  }
+}
+
+function restoreHistoryRun(index) {
+  const run = state.history[Number(index)];
+  if (!run) return;
+  els.titleInput.value = run.title || "Untitled spec";
+  els.specInput.value = run.specText || "";
+  els.strictnessSelect.value = run.strictness || "balanced";
+  els.domainSelect.value = run.domain || "general";
+  setRiskOverlays(run.riskOverlays || []);
+  state.sourceSpecText = run.specText || null;
+  state.preserveSourceForNextRun = false;
+  state.analyzedSpecText = null;
+  els.strictnessHelp.textContent = currentModeCopy();
+  syncOverlayToggleState();
+  toast("Restored run. Re-running analysis.");
+  analyze({ recordHistory: false, focusResult: false }).catch((error) => toast(error.message));
+}
+
+function resetWorkspace({ focus = true } = {}) {
+  state.report = null;
+  state.sourceSpecText = null;
+  state.preserveSourceForNextRun = false;
+  state.analyzedSpecText = null;
+  state.suppressingIssueId = null;
+  state.decidingIssueId = null;
+  els.titleInput.value = "Untitled spec";
+  els.specInput.value = "";
+  els.scoreValue.textContent = "--";
+  els.scoreLabel.textContent = "Build health";
+  els.verdictText.textContent = "Waiting for input";
+  els.summaryText.textContent = "Paste a product spec and run SpecLint.";
+  if (els.intentBadge) els.intentBadge.textContent = "Intent: waiting for draft";
+  els.rubricText.textContent = "Score is out of 100. Penalties appear here after analysis.";
+  els.strictnessHelp.textContent = currentModeCopy();
+  updateScoreProgress(0);
+  renderSeverityCounts({});
+  els.issuesPanel?.classList.remove("has-blockers", "has-diagnostics");
+  els.issueCount.textContent = "0 issues";
+  els.issuesList.className = "issue-list empty-state";
+  els.issuesList.textContent = "No issues yet.";
+  els.intentNarrative.className = "intent-narrative empty-state";
+  els.intentNarrative.textContent = "No intent extracted yet.";
+  els.intentGrid.className = "intent-grid empty-state";
+  els.intentGrid.textContent = "No intent extracted yet.";
+  els.testsList.className = "test-list empty-state";
+  els.testsList.textContent = "No tests generated yet.";
+  els.traceList.className = "trace-list empty-state";
+  els.traceList.textContent = "No traceability map yet.";
+  els.rewriteBox.className = "rewrite-box empty-state";
+  els.rewriteBox.textContent = "Run analysis to generate a tighter version.";
+  renderHistory();
+  updateWorkflowUi();
+  if (focus) els.specInput.focus();
 }
 
 function applyIssueFix(issueId) {
@@ -1626,14 +1760,12 @@ els.analyzeButton.addEventListener("click", () => {
   runPrimaryAction();
 });
 
+els.newSpecButton?.addEventListener("click", () => {
+  resetWorkspace();
+});
+
 els.clearButton.addEventListener("click", () => {
-  els.specInput.value = "";
-  state.report = null;
-  state.sourceSpecText = null;
-  state.preserveSourceForNextRun = false;
-  state.analyzedSpecText = null;
-  updateWorkflowUi();
-  els.specInput.focus();
+  resetWorkspace();
 });
 
 els.strictnessSelect.addEventListener("change", () => {
@@ -1777,21 +1909,23 @@ els.copyRewriteButton.addEventListener("click", async () => {
 els.downloadButton.addEventListener("click", downloadMarkdown);
 els.shareButton.addEventListener("click", () => copyShareLink().catch((error) => toast(error.message)));
 
-els.historyList.addEventListener("click", (event) => {
+function handleHistoryClick(event) {
   const button = event.target.closest(".history-item");
-  if (!button) return;
-  const run = state.history[Number(button.dataset.index)];
-  if (!run) return;
-  els.specInput.value = run.specText;
-  state.sourceSpecText = run.specText;
-  toast("Previous draft restored.");
-});
+  const sidebarButton = event.target.closest(".sidebar-history-item");
+  const target = button || sidebarButton;
+  if (!target) return;
+  restoreHistoryRun(target.dataset.index);
+}
+
+els.historyList?.addEventListener("click", handleHistoryClick);
+els.sidebarHistory?.addEventListener("click", handleHistoryClick);
 
 const storedTheme = getStoredTheme();
 setTheme(storedTheme || currentTheme() || systemTheme(), { persist: Boolean(storedTheme) });
 syncOverlayToggleState();
 renderSeverityFilterState();
 updateWorkflowUi();
+renderHistory();
 
 const themePreference = window.matchMedia?.("(prefers-color-scheme: dark)");
 themePreference?.addEventListener?.("change", (event) => {
