@@ -20,7 +20,7 @@ const state = {
 };
 
 const API_BASE_URL = (window.SPECLINT_CONFIG?.apiBaseUrl || "").replace(/\/$/, "");
-const THEME_STORAGE_KEY = "speclint-theme";
+const THEME_STORAGE_KEY = "speclint-stone-theme";
 
 const strictnessCopy = {
   lenient: "Lenient - early-stage ideas, ignores minor gaps, flags only blockers.",
@@ -147,6 +147,8 @@ const els = {
   scoreProgress: document.querySelector("#scoreProgress"),
   criticalCount: document.querySelector("#criticalCount"),
   highCount: document.querySelector("#highCount"),
+  mediumCount: document.querySelector("#mediumCount"),
+  lowCount: document.querySelector("#lowCount"),
   severityToggles: document.querySelectorAll("[data-severity-filter]"),
   verdictText: document.querySelector("#verdictText"),
   summaryText: document.querySelector("#summaryText"),
@@ -559,8 +561,8 @@ function workflowCopy(step = workflowState()) {
   return {
     draft: { label: "Analyze", state: "Drafting" },
     diagnose: { label: "Analyzing", state: "Analyzing" },
-    tighten: { label: "Tighten Specs", state: "Ready to tighten" },
-    finalize: { label: "Finalize & Save", state: "Ready to save" },
+    tighten: { label: "Analyze", state: "Ready to tighten" },
+    finalize: { label: "Analyze", state: "Ready to save" },
   }[step];
 }
 
@@ -581,8 +583,8 @@ function updateWorkflowUi() {
 function currentModeCopy() {
   const domain = humanize(els.domainSelect?.value || "general");
   const overlays = selectedRiskOverlays();
-  const overlayText = overlays.length ? ` Overlay focus: ${overlays.map(humanize).join(", ")}.` : " No risk overlays selected.";
-  return `${strictnessCopy[els.strictnessSelect.value]} Domain: ${domain}.${overlayText} Baseline blocker checks stay on.`;
+  const overlayText = overlays.length ? ` Risk overlays: ${overlays.map(humanize).join(", ")}.` : " No risk overlays selected.";
+  return `${strictnessCopy[els.strictnessSelect.value]} Domain: ${domain}.${overlayText}`;
 }
 
 function setRiskOverlays(overlays = []) {
@@ -611,20 +613,11 @@ function setAnalyzing(isAnalyzing) {
 }
 
 function runPrimaryAction() {
-  const step = workflowState();
-  if (step === "tighten") {
-    useRewrite({ rerun: true });
-    return;
-  }
-  if (step === "finalize") {
-    downloadMarkdown();
-    return;
-  }
   analyze().catch((error) => toast(error.message));
 }
 
 function focusDiagnostics() {
-  document.querySelector(".preview-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  els.issuesPanel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 async function analyze({ recordHistory = true, focusResult = true } = {}) {
@@ -737,7 +730,7 @@ function addHistory(report, specText) {
   if (previous?.specText === specText && previous?.title === title) {
     previous.score = report.score;
     previous.verdict = report.verdict;
-    previous.issueCount = fastTrackOpenIssues(report.issues, { respectSeverityFilter: false }).length;
+    previous.issueCount = openIssues(report.issues).length;
     previous.rewrittenSpec = report.rewritten_spec || "";
     previous.at = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     previous.updatedAt = new Date().toISOString();
@@ -749,7 +742,7 @@ function addHistory(report, specText) {
     title,
     score: report.score,
     verdict: report.verdict,
-    issueCount: fastTrackOpenIssues(report.issues, { respectSeverityFilter: false }).length,
+    issueCount: openIssues(report.issues).length,
     delta: previous ? report.score - previous.score : 0,
     specText,
     strictness: els.strictnessSelect.value,
@@ -766,9 +759,9 @@ function addHistory(report, specText) {
 function renderReport() {
   const report = state.report;
   if (!report) return;
-  const visibleIssues = fastTrackOpenIssues(report.issues, { respectSeverityFilter: false });
+  const visibleIssues = openIssues(report.issues);
   els.scoreValue.textContent = report.score;
-  els.scoreLabel.textContent = "Build health";
+  els.scoreLabel.textContent = `${verdictLabel(report.verdict)} out of 100`;
   els.verdictText.textContent = `${report.score} / 100 - ${verdictLabel(report.verdict)}`;
   els.summaryText.textContent = report.summary;
   updateScoreProgress(report.score);
@@ -791,7 +784,7 @@ function renderInputRejected() {
   state.decidingIssueId = null;
   state.analyzedSpecText = null;
   els.scoreValue.textContent = "--";
-  els.scoreLabel.textContent = "Build health";
+  els.scoreLabel.textContent = "Improper input";
   els.verdictText.textContent = "IMPROPER INPUT";
   els.summaryText.textContent = "Write a real product requirement before running SpecLint.";
   updateScoreProgress(0);
@@ -820,6 +813,8 @@ function renderInputRejected() {
 function renderSeverityCounts(counts = {}) {
   els.criticalCount.textContent = counts.critical || 0;
   els.highCount.textContent = counts.high || 0;
+  if (els.mediumCount) els.mediumCount.textContent = counts.medium || 0;
+  if (els.lowCount) els.lowCount.textContent = counts.low || 0;
   renderSeverityFilterState();
 }
 
@@ -893,15 +888,13 @@ function renderIntent(intent) {
 }
 
 function renderIssues(issues) {
-  const visibleIssues = fastTrackOpenIssues(issues);
-  const fastTrackTotal = fastTrackOpenIssues(issues, { respectSeverityFilter: false });
+  const visibleIssues = openIssues(issues);
   const acceptedRisks = acceptedRiskRecords(issues);
   const decisions = decisionRecords(issues);
   const pendingReviews = pendingReviewRecords(issues);
   const acceptedCount = acceptedRisks.length;
   renderIssueFilterState();
-  const focusLabel = state.severityFilter === "all" ? "" : ` ${state.severityFilter}`;
-  els.issueCount.textContent = `${visibleIssues.length}${focusLabel} blocker${visibleIssues.length === 1 ? "" : "s"}${pendingReviews.length ? ` + ${pendingReviews.length} review` : ""}${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
+  els.issueCount.textContent = `${visibleIssues.length} open${pendingReviews.length ? ` + ${pendingReviews.length} review` : ""}${decisions.length ? ` + ${decisions.length} decided` : ""}${acceptedCount ? ` + ${acceptedCount} accepted` : ""}`;
   const shouldOpenDrawer =
     visibleIssues.length > 0 ||
     state.issueFilter !== "action" ||
@@ -913,17 +906,6 @@ function renderIssues(issues) {
   if (!issues.length) {
     els.issuesList.className = "issue-list empty-state";
     els.issuesList.textContent = "No lint issues found.";
-    return;
-  }
-  if (!visibleIssues.length && state.issueFilter === "action" && fastTrackTotal.length && state.severityFilter !== "all") {
-    els.issuesList.className = "issue-list";
-    els.issuesList.innerHTML = `<article class="issue-item fast-track-good">No ${escapeHtml(state.severityFilter)} blockers in this view.</article>`;
-    return;
-  }
-  if (!visibleIssues.length && state.issueFilter === "action") {
-    const minor = firstMinorRisk(issues);
-    els.issuesList.className = "issue-list";
-    els.issuesList.innerHTML = `<article class="issue-item fast-track-good">&#9989; Build-ready. Watch out for: ${escapeHtml(minor?.title || "one minor risk")}.</article>`;
     return;
   }
   els.issuesList.className = "issue-list";
@@ -949,24 +931,34 @@ function issueMarkupFor(issue) {
   const isSuppressing = state.suppressingIssueId === issue.id;
   const isDeciding = state.decidingIssueId === issue.id;
   return `
-        <article class="issue-item fast-track-issue">
-          <div class="issue-fast-line">
-            <p><strong>${severityIcon(issue.severity)} ${escapeHtml(issue.title)}:</strong> ${escapeHtml(issue.suggestion)}</p>
+        <article class="issue-item">
+          <div class="issue-topline">
+            <div class="tag-row">
+              <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
+              ${
+                issue.base_severity
+                  ? `<span class="tag context-tag">${humanize(issue.base_severity)} -> ${humanize(issue.severity)}</span>`
+                  : ""
+              }
+              <span class="tag">${humanize(issue.type)}</span>
+              ${issue.context_note ? `<span class="tag context-tag">${escapeHtml(issue.context_note)}</span>` : ""}
+            </div>
             <div class="issue-actions">
               <button class="cta-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Fix</button>
               <button class="cta-button compact decide-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Decide</button>
               <button class="cta-button compact suppress-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Accept</button>
             </div>
           </div>
-          <div class="tag-row issue-meta">
-            <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
-            ${
-              issue.base_severity
-                ? `<span class="tag context-tag">${humanize(issue.base_severity)} -> ${humanize(issue.severity)}</span>`
-                : ""
-            }
-            <span class="tag">${humanize(issue.type)}</span>
-            ${issue.context_note ? `<span class="tag context-tag">${escapeHtml(issue.context_note)}</span>` : ""}
+          <h3>${escapeHtml(issue.title)}</h3>
+          <div class="issue-grid">
+            <span class="issue-label">Evidence</span>
+            <p>${escapeHtml(issue.evidence)}</p>
+            <span class="issue-label">Why it matters</span>
+            <p>${escapeHtml(issue.why_it_matters)}</p>
+            <span class="issue-label">Suggested fix</span>
+            <p>${escapeHtml(issue.suggestion)}</p>
+            <span class="issue-label">Question to answer</span>
+            <p>${escapeHtml(issue.test_prompt)}</p>
           </div>
           ${
             isDeciding
@@ -1389,7 +1381,7 @@ function resetWorkspace({ focus = true } = {}) {
   els.titleInput.value = "Untitled spec";
   els.specInput.value = "";
   els.scoreValue.textContent = "--";
-  els.scoreLabel.textContent = "Build health";
+  els.scoreLabel.textContent = "No report";
   els.verdictText.textContent = "Waiting for input";
   els.summaryText.textContent = "Paste a product spec and run SpecLint.";
   if (els.intentBadge) els.intentBadge.textContent = "Intent: waiting for draft";
