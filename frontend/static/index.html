@@ -17,7 +17,7 @@
         document.documentElement.dataset.theme = theme;
       })();
     </script>
-    <link rel="stylesheet" href="/static/styles.css?v=stone-normal" />
+    <link rel="stylesheet" href="/static/styles.css?v=stone-depth-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -30,10 +30,10 @@
           </div>
         </div>
         <div class="review-flow" aria-label="Review flow">
-          <span>1. Draft</span>
-          <span>2. Diagnose</span>
-          <span>3. Tighten</span>
-          <span>4. Re-run</span>
+          <span data-pipeline-step="draft">1. Draft</span>
+          <span data-pipeline-step="diagnose">2. Diagnose</span>
+          <span data-pipeline-step="tighten">3. Tighten</span>
+          <span data-pipeline-step="finalize">4. Re-run</span>
         </div>
         <div class="score-card">
           <span id="scoreValue">--</span>
@@ -128,11 +128,11 @@
               <fieldset class="overlay-fieldset">
                 <legend>Risk overlays</legend>
                 <div class="overlay-options">
-                  <label><input type="checkbox" name="riskOverlay" value="auth" /> Auth</label>
-                  <label><input type="checkbox" name="riskOverlay" value="payments" /> Payments</label>
-                  <label><input type="checkbox" name="riskOverlay" value="pii" /> PII</label>
-                  <label><input type="checkbox" name="riskOverlay" value="public_sharing" /> Public sharing</label>
-                  <label><input type="checkbox" name="riskOverlay" value="high_availability" /> High availability</label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="auth" /> Auth</label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="payments" /> Payments</label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="pii" /> PII</label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="public_sharing" /> Public sharing</label>
+                  <label class="overlay-toggle"><input type="checkbox" name="riskOverlay" value="high_availability" /> High availability</label>
                 </div>
               </fieldset>
               <label>
@@ -241,6 +241,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/static/config.js"></script>
-    <script src="/static/app.js?v=stone-normal" type="module"></script>
+    <script src="/static/app.js?v=stone-depth-2" type="module"></script>
   </body>
 </html>

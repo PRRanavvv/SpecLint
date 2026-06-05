@@ -17,6 +17,7 @@ const state = {
   preserveSourceForNextRun: false,
   analyzedSpecText: null,
   analysisRequestId: 0,
+  sharedReadOnly: false,
 };
 
 const API_BASE_URL = (window.SPECLINT_CONFIG?.apiBaseUrl || "").replace(/\/$/, "");
@@ -143,6 +144,7 @@ const els = {
   strictnessHelp: document.querySelector("#strictnessHelp"),
   scoreValue: document.querySelector("#scoreValue"),
   scoreLabel: document.querySelector("#scoreLabel"),
+  scoreCard: document.querySelector(".score-card"),
   scoreGauge: document.querySelector("#scoreGauge"),
   scoreProgress: document.querySelector("#scoreProgress"),
   criticalCount: document.querySelector("#criticalCount"),
@@ -477,6 +479,13 @@ function tags(items, empty = "None detected") {
   return items.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("");
 }
 
+function intentTags(items) {
+  if (!items?.length) return `<span class="empty-slot">None detected</span>`;
+  return items
+    .map((item, index) => `<span class="tag intent-tag" style="--tag-i: ${index}">${escapeHtml(item)}</span>`)
+    .join("");
+}
+
 function selectedRiskOverlays() {
   return [...els.riskOverlayInputs].filter((input) => input.checked).map((input) => input.value);
 }
@@ -577,6 +586,11 @@ function updateWorkflowUi() {
   els.pipelineSteps.forEach((item) => {
     const active = item.dataset.pipelineStep === step;
     item.classList.toggle("active", active);
+    if (active) {
+      item.setAttribute("aria-current", "step");
+    } else {
+      item.removeAttribute("aria-current");
+    }
   });
 }
 
@@ -608,11 +622,18 @@ function setAnalyzing(isAnalyzing) {
   document.body.classList.toggle("is-analyzing", isAnalyzing);
   document.body.classList.toggle("focus-mode", false);
   els.heroBand?.setAttribute("aria-busy", String(isAnalyzing));
-  els.analyzeButton.disabled = isAnalyzing;
+  els.analyzeButton.disabled = isAnalyzing || state.sharedReadOnly;
   updateWorkflowUi();
 }
 
+function readOnlyBlocked() {
+  if (!state.sharedReadOnly) return false;
+  toast("Shared analysis links are read-only.");
+  return true;
+}
+
 function runPrimaryAction() {
+  if (readOnlyBlocked()) return;
   analyze().catch((error) => toast(error.message));
 }
 
@@ -728,6 +749,7 @@ function addHistory(report, specText) {
   const previous = state.history[0];
   const title = report.title || els.titleInput.value.trim() || "Untitled spec";
   if (previous?.specText === specText && previous?.title === title) {
+    previous.delta = report.score - previous.score;
     previous.score = report.score;
     previous.verdict = report.verdict;
     previous.issueCount = openIssues(report.issues).length;
@@ -760,11 +782,8 @@ function renderReport() {
   const report = state.report;
   if (!report) return;
   const visibleIssues = openIssues(report.issues);
-  els.scoreValue.textContent = report.score;
-  els.scoreLabel.textContent = `${verdictLabel(report.verdict)} out of 100`;
-  els.verdictText.textContent = `${report.score} / 100 - ${verdictLabel(report.verdict)}`;
+  renderScore(report);
   els.summaryText.textContent = report.summary;
-  updateScoreProgress(report.score);
   els.strictnessHelp.textContent = currentModeCopy();
   renderSeverityCounts(severityCountsForIssues(visibleIssues));
   renderRubric(report.score_breakdown);
@@ -783,11 +802,8 @@ function renderInputRejected() {
   state.suppressingIssueId = null;
   state.decidingIssueId = null;
   state.analyzedSpecText = null;
-  els.scoreValue.textContent = "--";
-  els.scoreLabel.textContent = "Improper input";
-  els.verdictText.textContent = "IMPROPER INPUT";
+  renderEmptyScore({ label: "Improper input", verdict: "IMPROPER INPUT", status: "rejected" });
   els.summaryText.textContent = "Write a real product requirement before running SpecLint.";
-  updateScoreProgress(0);
   els.rubricText.textContent = "No score generated. This input was rejected before analysis.";
   els.strictnessHelp.textContent = currentModeCopy();
   if (els.intentBadge) els.intentBadge.textContent = "Intent: rejected input";
@@ -824,13 +840,79 @@ function scoreStatus(score) {
   return "high";
 }
 
-function updateScoreProgress(score = 0) {
+function scoreStatusForReport(score, verdict) {
+  if (verdict === "does_not_compile") return "low";
+  return scoreStatus(score);
+}
+
+function prefersReducedMotion() {
+  return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+}
+
+function animateNumber(el, from, to, { duration = 600 } = {}) {
+  if (!el) return;
+  if (prefersReducedMotion() || from === to) {
+    el.textContent = to;
+    return;
+  }
+  const start = performance.now();
+  const distance = to - from;
+  window.cancelAnimationFrame(animateNumber.frame);
+  const tick = (now) => {
+    const progress = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    el.textContent = Math.round(from + distance * eased);
+    if (progress < 1) animateNumber.frame = window.requestAnimationFrame(tick);
+  };
+  animateNumber.frame = window.requestAnimationFrame(tick);
+}
+
+function renderScore(report, { animate = true } = {}) {
+  const score = Math.max(0, Math.min(100, Number(report.score) || 0));
+  const status = scoreStatusForReport(score, report.verdict);
+  const previous = /^\d+$/.test(els.scoreValue.textContent) ? Number(els.scoreValue.textContent) : 0;
+  els.scoreCard?.setAttribute("data-status", status);
+  els.scoreLabel?.setAttribute("data-status", status);
+  animateNumber(els.scoreValue, animate ? previous : score, score);
+  els.scoreLabel.textContent = verdictLabel(report.verdict);
+  els.verdictText.innerHTML = `
+    <span class="hero-score">${score}/100</span>
+    <span class="hero-verdict status-${status}">${escapeHtml(verdictLabel(report.verdict))}</span>
+  `;
+  updateScoreProgress(score, { animate });
+}
+
+function renderEmptyScore({ label = "No report", verdict = "Waiting for input", status = "waiting" } = {}) {
+  window.cancelAnimationFrame(animateNumber.frame);
+  els.scoreCard?.setAttribute("data-status", status);
+  els.scoreLabel?.setAttribute("data-status", status);
+  els.scoreValue.textContent = "--";
+  els.scoreLabel.textContent = label;
+  els.verdictText.textContent = verdict;
+  updateScoreProgress(0, { animate: false });
+}
+
+function updateScoreProgress(score = 0, { animate = true } = {}) {
   const safeScore = Math.max(0, Math.min(100, Number(score) || 0));
   const status = scoreStatus(safeScore);
   if (els.scoreProgress) {
-    els.scoreProgress.value = safeScore;
+    window.cancelAnimationFrame(updateScoreProgress.frame);
+    const from = animate && !prefersReducedMotion() ? Number(els.scoreProgress.value) || 0 : safeScore;
     els.scoreProgress.setAttribute("aria-valuenow", String(safeScore));
     els.scoreProgress.setAttribute("data-status", status);
+    if (!animate || prefersReducedMotion() || from === safeScore) {
+      els.scoreProgress.value = safeScore;
+    } else {
+      const start = performance.now();
+      const distance = safeScore - from;
+      const tick = (now) => {
+        const progress = Math.min(1, (now - start) / 600);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        els.scoreProgress.value = Math.round(from + distance * eased);
+        if (progress < 1) updateScoreProgress.frame = window.requestAnimationFrame(tick);
+      };
+      updateScoreProgress.frame = window.requestAnimationFrame(tick);
+    }
   }
   if (els.scoreGauge) {
     els.scoreGauge.style.setProperty("--score-angle", `${safeScore * 3.6}deg`);
@@ -880,7 +962,7 @@ function renderIntent(intent) {
         <section class="intent-block">
           <h3>${label}</h3>
           <p>${escapeHtml(help)}</p>
-          <div class="tag-row">${tags(values)}</div>
+          <div class="tag-row">${intentTags(values)}</div>
         </section>
       `,
     )
@@ -910,28 +992,43 @@ function renderIssues(issues) {
   }
   els.issuesList.className = "issue-list";
   const sections = [];
+  let animationIndex = 0;
   if (state.issueFilter === "action" || state.issueFilter === "all") {
-    sections.push(visibleIssues.map((issue) => issueMarkupFor(issue)).join(""));
+    sections.push(
+      visibleIssues
+        .map((issue) => {
+          const markup = issueMarkupFor(issue, animationIndex);
+          animationIndex += 1;
+          return markup;
+        })
+        .join(""),
+    );
   }
   if (state.issueFilter === "review" || state.issueFilter === "all") {
-    sections.push(pendingReviewMarkup(pendingReviews));
+    sections.push(pendingReviewMarkup(pendingReviews, animationIndex));
+    animationIndex += pendingReviews.length;
   }
   if (state.issueFilter === "all") {
-    sections.push(decisionMarkup(decisions));
+    sections.push(decisionMarkup(decisions, animationIndex));
+    animationIndex += decisions.length;
   }
   if (state.issueFilter === "accepted" || state.issueFilter === "all") {
-    sections.push(acceptedRiskMarkup(acceptedRisks));
+    sections.push(acceptedRiskMarkup(acceptedRisks, animationIndex));
   }
   const markup = sections.join("");
   els.issuesList.innerHTML = markup || `<div class="empty-state">${emptyIssueFilterCopy()}</div>`;
 }
 
-function issueMarkupFor(issue) {
+function issueStyle(index) {
+  return `style="--i: ${Number(index) || 0}"`;
+}
+
+function issueMarkupFor(issue, index = 0) {
   const existing = state.suppressions[issue.id] || {};
   const isSuppressing = state.suppressingIssueId === issue.id;
   const isDeciding = state.decidingIssueId === issue.id;
   return `
-        <article class="issue-item">
+        <article class="issue-item" ${issueStyle(index)}>
           <div class="issue-topline">
             <div class="tag-row">
               <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
@@ -943,11 +1040,17 @@ function issueMarkupFor(issue) {
               <span class="tag">${humanize(issue.type)}</span>
               ${issue.context_note ? `<span class="tag context-tag">${escapeHtml(issue.context_note)}</span>` : ""}
             </div>
-            <div class="issue-actions">
-              <button class="cta-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Fix</button>
-              <button class="cta-button compact decide-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Decide</button>
-              <button class="cta-button compact suppress-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Accept</button>
-            </div>
+            ${
+              state.sharedReadOnly
+                ? ""
+                : `
+                  <div class="issue-actions">
+                    <button class="cta-button compact apply-fix" type="button" data-issue-id="${escapeHtml(issue.id)}">Fix</button>
+                    <button class="cta-button compact decide-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Decide</button>
+                    <button class="cta-button compact suppress-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Accept</button>
+                  </div>
+                `
+            }
           </div>
           <h3>${escapeHtml(issue.title)}</h3>
           <div class="issue-grid">
@@ -1021,7 +1124,15 @@ function issueMarkupFor(issue) {
 }
 
 function renderIssueFilterState() {
-  els.issueFilters.forEach((button) => {
+  const buttons = [...els.issueFilters];
+  const activeIndex = Math.max(
+    0,
+    buttons.findIndex((button) => button.dataset.issueFilter === state.issueFilter),
+  );
+  const group = buttons[0]?.parentElement;
+  group?.style.setProperty("--filter-count", String(buttons.length || 1));
+  group?.style.setProperty("--filter-index", String(activeIndex));
+  buttons.forEach((button) => {
     const active = button.dataset.issueFilter === state.issueFilter;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
@@ -1043,7 +1154,7 @@ function emptyIssueFilterCopy() {
   return "No action-required issues. Decisions, pending reviews, and accepted risks are still available in All.";
 }
 
-function pendingReviewMarkup(records) {
+function pendingReviewMarkup(records, startIndex = 0) {
   if (!records.length) return "";
   return `
     <section class="pending-review-group" aria-label="Pending reviews">
@@ -1056,8 +1167,8 @@ function pendingReviewMarkup(records) {
       </div>
       ${records
         .map(
-          ({ issue, kind, record }) => `
-            <article class="issue-item pending-review">
+          ({ issue, kind, record }, index) => `
+            <article class="issue-item pending-review" ${issueStyle(startIndex + index)}>
               <div class="issue-topline">
                 <div class="tag-row">
                   <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
@@ -1070,10 +1181,16 @@ function pendingReviewMarkup(records) {
                   <span class="tag">Needs review</span>
                   <span class="tag">${kind === "decision" ? "Decision" : "Accepted risk"}</span>
                 </div>
-                <div class="issue-actions">
-                  <button class="ghost-button compact reconfirm-review" type="button" data-review-kind="${escapeHtml(kind)}" data-issue-id="${escapeHtml(issue.id)}">Reconfirm</button>
-                  <button class="ghost-button compact reopen-review" type="button" data-review-kind="${escapeHtml(kind)}" data-issue-id="${escapeHtml(issue.id)}">Reopen</button>
-                </div>
+                ${
+                  state.sharedReadOnly
+                    ? ""
+                    : `
+                      <div class="issue-actions">
+                        <button class="ghost-button compact reconfirm-review" type="button" data-review-kind="${escapeHtml(kind)}" data-issue-id="${escapeHtml(issue.id)}">Reconfirm</button>
+                        <button class="ghost-button compact reopen-review" type="button" data-review-kind="${escapeHtml(kind)}" data-issue-id="${escapeHtml(issue.id)}">Reopen</button>
+                      </div>
+                    `
+                }
               </div>
               <h3>${escapeHtml(issue.title)}</h3>
               <div class="issue-grid">
@@ -1092,7 +1209,7 @@ function pendingReviewMarkup(records) {
   `;
 }
 
-function acceptedRiskMarkup(records) {
+function acceptedRiskMarkup(records, startIndex = 0) {
   if (!records.length) return "";
   return `
     <section class="accepted-risk-group" aria-label="Accepted risks">
@@ -1105,8 +1222,8 @@ function acceptedRiskMarkup(records) {
       </div>
       ${records
         .map(
-          ({ issue, suppression }) => `
-            <article class="issue-item accepted-risk">
+          ({ issue, suppression }, index) => `
+            <article class="issue-item accepted-risk" ${issueStyle(startIndex + index)}>
               <div class="issue-topline">
                 <div class="tag-row">
                   <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
@@ -1118,7 +1235,11 @@ function acceptedRiskMarkup(records) {
                   <span class="tag">${humanize(issue.type)}</span>
                   <span class="tag">Accepted risk</span>
                 </div>
-                <button class="ghost-button compact restore-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Reopen</button>
+                ${
+                  state.sharedReadOnly
+                    ? ""
+                    : `<button class="ghost-button compact restore-issue" type="button" data-issue-id="${escapeHtml(issue.id)}">Reopen</button>`
+                }
               </div>
               <h3>${escapeHtml(issue.title)}</h3>
               <div class="issue-grid">
@@ -1137,7 +1258,7 @@ function acceptedRiskMarkup(records) {
   `;
 }
 
-function decisionMarkup(records) {
+function decisionMarkup(records, startIndex = 0) {
   if (!records.length) return "";
   return `
     <section class="decision-group" aria-label="Requirements decisions">
@@ -1150,8 +1271,8 @@ function decisionMarkup(records) {
       </div>
       ${records
         .map(
-          ({ issue, decision }) => `
-            <article class="issue-item decided-issue">
+          ({ issue, decision }, index) => `
+            <article class="issue-item decided-issue" ${issueStyle(startIndex + index)}>
               <div class="issue-topline">
                 <div class="tag-row">
                   <span class="severity-pill severity-${escapeHtml(issue.severity)}">${humanize(issue.severity)}</span>
@@ -1327,22 +1448,27 @@ function renderHistory() {
       (run, index) => `
         <button class="sidebar-history-item" type="button" data-index="${index}">
           <strong>${escapeHtml(run.title || "Untitled spec")}</strong>
-          <span>${escapeHtml(run.score ?? "--")}/100 · ${escapeHtml(run.at || "saved")}</span>
+          <span>${escapeHtml(run.score ?? "--")}/100 &middot; ${escapeHtml(run.at || "saved")}</span>
         </button>
       `,
     )
     .join("");
   const detailMarkup = state.history
-    .map(
-      (run, index) => `
+    .map((run, index) => {
+      const delta = Number(run.delta) || 0;
+      const deltaMarkup = delta
+        ? `<small class="score-delta ${delta > 0 ? "positive" : "negative"}">${delta > 0 ? "+" : ""}${delta} from previous</small>`
+        : `<small class="score-delta">baseline</small>`;
+      return `
         <button class="history-item" type="button" data-index="${index}">
           <span>${escapeHtml(run.at || "saved")}</span>
           <strong>${escapeHtml(run.score ?? "--")}/100</strong>
           <small>${escapeHtml(run.title || "Untitled spec")}</small>
           <small>${run.issueCount || 0} blocker${run.issueCount === 1 ? "" : "s"}</small>
+          ${deltaMarkup}
         </button>
-      `,
-    )
+      `;
+    })
     .join("");
   if (els.sidebarHistory) {
     els.sidebarHistory.className = "sidebar-history";
@@ -1380,14 +1506,11 @@ function resetWorkspace({ focus = true } = {}) {
   state.decidingIssueId = null;
   els.titleInput.value = "Untitled spec";
   els.specInput.value = "";
-  els.scoreValue.textContent = "--";
-  els.scoreLabel.textContent = "No report";
-  els.verdictText.textContent = "Waiting for input";
+  renderEmptyScore({ label: "No report", verdict: "Waiting for input", status: "waiting" });
   els.summaryText.textContent = "Paste a product spec and run SpecLint.";
   if (els.intentBadge) els.intentBadge.textContent = "Intent: waiting for draft";
   els.rubricText.textContent = "Score is out of 100. Penalties appear here after analysis.";
   els.strictnessHelp.textContent = currentModeCopy();
-  updateScoreProgress(0);
   renderSeverityCounts({});
   els.issuesPanel?.classList.remove("has-blockers", "has-diagnostics");
   els.issueCount.textContent = "0 issues";
@@ -1409,6 +1532,7 @@ function resetWorkspace({ focus = true } = {}) {
 }
 
 function applyIssueFix(issueId) {
+  if (readOnlyBlocked()) return;
   const issue = state.report?.issues.find((item) => item.id === issueId);
   if (!issue) return;
   const line = `- ${issue.suggestion}`;
@@ -1431,6 +1555,7 @@ function applyIssueFix(issueId) {
 }
 
 function openSuppressionForm(issueId) {
+  if (readOnlyBlocked()) return;
   if (!state.report?.issues.some((issue) => issue.id === issueId)) return;
   state.suppressingIssueId = issueId;
   state.decidingIssueId = null;
@@ -1443,6 +1568,7 @@ function cancelSuppressionForm() {
 }
 
 function openDecisionForm(issueId) {
+  if (readOnlyBlocked()) return;
   if (!state.report?.issues.some((issue) => issue.id === issueId)) return;
   state.decidingIssueId = issueId;
   state.suppressingIssueId = null;
@@ -1455,6 +1581,7 @@ function cancelDecisionForm() {
 }
 
 async function saveDecision(issueId, form) {
+  if (readOnlyBlocked()) return;
   const formData = new FormData(form);
   const owner = String(formData.get("owner") || "").trim();
   const decisionNote = String(formData.get("decisionNote") || "").trim();
@@ -1506,6 +1633,7 @@ async function saveDecision(issueId, form) {
 }
 
 async function saveSuppression(issueId, form) {
+  if (readOnlyBlocked()) return;
   const formData = new FormData(form);
   const owner = String(formData.get("owner") || "").trim();
   const reason = String(formData.get("reason") || "").trim();
@@ -1564,6 +1692,7 @@ async function saveSuppression(issueId, form) {
 }
 
 async function restoreIssue(issueId) {
+  if (readOnlyBlocked()) return;
   const suppression = state.suppressions[issueId];
   if (!suppression) return;
   if (suppression.suppressionId) {
@@ -1587,6 +1716,7 @@ async function restoreIssue(issueId) {
 }
 
 async function reconfirmReview(kind, issueId) {
+  if (readOnlyBlocked()) return;
   const record = kind === "decision" ? state.decisions[issueId] : state.suppressions[issueId];
   if (!record) return;
   if (kind === "decision") {
@@ -1623,6 +1753,7 @@ async function reconfirmReview(kind, issueId) {
 }
 
 async function reopenReview(kind, issueId) {
+  if (readOnlyBlocked()) return;
   if (kind === "decision") {
     await reopenDecision(issueId);
     return;
@@ -1631,6 +1762,7 @@ async function reopenReview(kind, issueId) {
 }
 
 async function reopenDecision(issueId) {
+  if (readOnlyBlocked()) return;
   const decision = state.decisions[issueId];
   if (!decision) return;
   if (decision.decisionId) {
@@ -1654,6 +1786,7 @@ async function reopenDecision(issueId) {
 }
 
 function useRewrite({ rerun = false } = {}) {
+  if (readOnlyBlocked()) return;
   if (!state.report?.rewritten_spec) {
     toast("Run analysis first.");
     return;
@@ -1712,32 +1845,93 @@ function downloadMarkdown() {
 }
 
 async function copyShareLink() {
+  const hasReport = Boolean(state.report);
   const payload = {
+    version: 1,
     title: els.titleInput.value,
     spec: els.specInput.value,
     strictness: els.strictnessSelect.value,
     domain: els.domainSelect.value,
     riskOverlays: selectedRiskOverlays(),
+    ...(hasReport
+      ? {
+          report: state.report,
+          suppressions: state.suppressions,
+          decisions: state.decisions,
+          sharedAt: new Date().toISOString(),
+        }
+      : {}),
   };
-  const hash = encodeURIComponent(JSON.stringify(payload));
-  const url = `${location.origin}${location.pathname}#spec=${hash}`;
-  await navigator.clipboard.writeText(url);
-  history.replaceState(null, "", `#spec=${hash}`);
-  toast("Share link copied.");
+  const hashKey = hasReport ? "analysis" : "spec";
+  const hash = encodeHashPayload(payload);
+  const url = `${location.origin}${location.pathname}#${hashKey}=${hash}`;
+  history.replaceState(null, "", `#${hashKey}=${hash}`);
+  try {
+    await navigator.clipboard.writeText(url);
+    toast(hasReport ? "Read-only analysis link copied." : "Draft share link copied.");
+  } catch {
+    toast(hasReport ? "Read-only analysis link is in the address bar." : "Draft share link is in the address bar.");
+  }
+}
+
+function encodeHashPayload(payload) {
+  const json = JSON.stringify(payload);
+  const bytes = new TextEncoder().encode(json);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+function decodeHashPayload(value) {
+  try {
+    const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return JSON.parse(decodeURIComponent(value));
+  }
+}
+
+function applySharedControls(payload) {
+  els.titleInput.value = payload.title || "Untitled spec";
+  els.specInput.value = payload.spec || "";
+  state.sourceSpecText = payload.spec || null;
+  els.strictnessSelect.value = payload.strictness || "balanced";
+  els.domainSelect.value = payload.domain || "general";
+  setRiskOverlays(payload.riskOverlays || payload.risk_overlays || []);
+  els.strictnessHelp.textContent = currentModeCopy();
+}
+
+function enterSharedReadOnlyView(payload) {
+  if (!payload?.report) return false;
+  state.sharedReadOnly = true;
+  state.report = payload.report;
+  state.suppressions = payload.suppressions && typeof payload.suppressions === "object" ? payload.suppressions : {};
+  state.decisions = payload.decisions && typeof payload.decisions === "object" ? payload.decisions : {};
+  state.analyzedSpecText = payload.spec || "";
+  applySharedControls(payload);
+  document.body.classList.add("is-shared-view");
+  renderReport();
+  updateWorkflowUi();
+  return true;
 }
 
 function loadFromHash() {
+  if (location.hash.startsWith("#analysis=")) {
+    try {
+      return enterSharedReadOnlyView(decodeHashPayload(location.hash.slice(10))) ? "analysis" : false;
+    } catch {
+      return false;
+    }
+  }
   if (!location.hash.startsWith("#spec=")) return false;
   try {
-    const payload = JSON.parse(decodeURIComponent(location.hash.slice(6)));
-    els.titleInput.value = payload.title || "Untitled spec";
-    els.specInput.value = payload.spec || "";
-    state.sourceSpecText = payload.spec || null;
-    els.strictnessSelect.value = payload.strictness || "balanced";
-    els.domainSelect.value = payload.domain || "general";
-    setRiskOverlays(payload.riskOverlays || payload.risk_overlays || []);
-    els.strictnessHelp.textContent = currentModeCopy();
-    return Boolean(payload.spec);
+    const payload = decodeHashPayload(location.hash.slice(6));
+    applySharedControls(payload);
+    return payload.spec ? "spec" : false;
   } catch {
     return false;
   }
@@ -1927,6 +2121,7 @@ themePreference?.addEventListener?.("change", (event) => {
 loadExamples()
   .then(() => {
     const loaded = loadFromHash();
-    return analyze({ recordHistory: true && loaded, focusResult: false });
+    if (loaded === "analysis") return null;
+    return analyze({ recordHistory: loaded === "spec", focusResult: false });
   })
   .catch((error) => toast(error.message));
